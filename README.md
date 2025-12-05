@@ -34,7 +34,6 @@
 - 自动监听图片。
 - 使用视觉/文本模型生成图片描述、标签与情绪分类。
 - 在回复发送前追加 base64 图片，与文本同条消息链发出。
-- 精简指令集，支持随机、按描述与按情绪检索与发送。
 
 ## 📦 安装方法
 
@@ -73,21 +72,6 @@ meme auto_off
 
 ### 3. 基本使用
 
-随机发送表情包：
-```bash
-meme random 1
-```
-
-按情绪发送匹配的表情包：
-```bash
-meme emotion 开心
-```
-
-按描述/标签检索表情包：
-```bash
-meme find 可爱
-```
-
 查看当前插件状态：
 ```bash
 meme status
@@ -120,9 +104,6 @@ meme status
 | `meme show_providers` | 查看当前模型配置 |
 | `meme auto_on` | 开启自动随聊表情 |
 | `meme auto_off` | 关闭自动随聊表情 |
-| `meme random <num>` | 随机发送指定数量的表情包 |
-| `meme emotion <emotion>` | 按情绪发送匹配的表情包 |
-| `meme find <keyword>` | 按描述/标签检索表情包 |
 | `meme status` | 查看当前插件状态 |
 | `meme emoji_only <on/off>` | 切换仅偷取表情包模式 |
 

@@ -71,14 +71,103 @@ class StealerPlugin(Star):
         
         # 缓存清理阈值
         self._CACHE_MAX_SIZE = 1000  # 每个缓存的最大条目数
+        
+        # 情绪类别映射 - 移到类属性避免重复创建
+        self._EMOTION_MAPPING = {
+            # Chinese -> English canonical labels
+            "开心": "happy",
+            "高兴": "happy",
+            "快乐": "happy",
+            "喜悦": "happy",
+            "大笑": "happy",
+            "无语": "neutral",
+            "郁闷": "neutral",
+            "无奈": "neutral",
+            "平静": "neutral",
+            "一般般": "neutral",
+            "一般": "neutral",
+            "难过": "sad",
+            "伤心": "sad",
+            "悲伤": "sad",
+            "沮丧": "sad",
+            "生气": "angry",
+            "愤怒": "angry",
+            "暴怒": "angry",
+            "恼火": "angry",
+            "发火": "angry",
+            "害羞": "shy",
+            "腼腆": "shy",
+            "害臊": "shy",
+            "害羞脸红": "shy",
+            "脸红": "shy",
+            "羞涩": "shy",
+            "不好意思": "shy",
+            "震惊": "surprised",
+            "惊讶": "surprised",
+            "吓到": "surprised",
+            "吃惊": "surprised",
+            "惊呆": "surprised",
+            "奸笑": "smirk",
+            "坏笑": "smirk",
+            "窃笑": "smirk",
+            "偷笑": "smirk",
+            "调皮": "smirk",
+            "得意": "smirk",
+            "哭泣": "cry",
+            "哭": "cry",
+            "落泪": "cry",
+            "流泪": "cry",
+            "泪目": "cry",
+            "疑惑": "confused",
+            "迷茫": "confused",
+            "困惑": "confused",
+            "疑问": "confused",
+            "迷惑": "confused",
+            "尴尬": "embarrassed",
+            "难堪": "embarrassed",
+            "难为情": "embarrassed",
+            "窘迫": "embarrassed",
+            
+            # English aliases to canonical labels
+            "joy": "happy",
+            "joyful": "happy",
+            "smile": "happy",
+            "glad": "happy",
+            "cheerful": "happy",
+            "content": "happy",
+            "unhappy": "sad",
+            "upset": "sad",
+            "depressed": "sad",
+            "mad": "angry",
+            "annoyed": "angry",
+            "furious": "angry",
+            "bashful": "shy",
+            "timid": "shy",
+            "amazed": "surprised",
+            "astonished": "surprised",
+            "shocked": "surprised",
+            "shock": "surprised",
+            "grin": "smirk",
+            "crying": "cry",
+            "weep": "cry",
+            "sorrow": "cry",
+            "puzzled": "confused",
+            "perplexed": "confused",
+            "abashed": "embarrassed",
+            "humiliated": "embarrassed",
+            "embarrassed": "embarrassed",
+            "confused": "confused",
+            "surprised": "surprised",
+            "smirk": "smirk",
+            "neutral": "neutral",
+        }
         self.desc_cache_path: Path | None = None
         self.emotion_cache_path: Path | None = None
         self._desc_cache: dict[str, str] = {}
         self._emotion_cache: dict[str, str] = {}
         self.emoji_only: bool = True  # 仅偷取表情包开关
-        # 人格提示词备份与注入状态
-        self._persona_backup: list[dict] = []
-        self._persona_prompt_injected: bool = False
+        
+
 
     def _update_config_from_dict(self, config_dict: dict):
         """从配置字典更新插件配置。"""
@@ -157,7 +246,8 @@ class StealerPlugin(Star):
         if self.desc_cache_path and self.desc_cache_path.exists():
             try:
                 self._desc_cache = json.loads(self.desc_cache_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as e:
+                logger.error(f"加载描述缓存失败: {e}")
                 self._desc_cache = {}
         else:
             if self.desc_cache_path:
@@ -171,8 +261,7 @@ class StealerPlugin(Star):
             if self.emotion_cache_path:
                 self.emotion_cache_path.write_text(json.dumps({}, ensure_ascii=False), encoding="utf-8")
 
-        # 在所有人格中注入表情标签提示（类似 meme_manager 的做法）
-        self._inject_persona_prompt()
+        # 移除了侵入式的人格修改功能，使用非侵入式的表情标签提取方式
 
         # 从插件配置读取模型选择
         try:
@@ -190,23 +279,14 @@ class StealerPlugin(Star):
             self._scanner_task = asyncio.create_task(self._scanner_loop())
 
     async def terminate(self):
-        """插件销毁生命周期钩子。恢复人格提示并清理任务。"""
-        # 恢复人格提示词
-        try:
-            if self._persona_backup:
-                personas = self.context.provider_manager.personas
-                for p, b in zip(personas, self._persona_backup):
-                    if "prompt" in b:
-                        p["prompt"] = b["prompt"]
-        except Exception as e:
-            logger.error(f"恢复人格提示失败: {e}")
+        """插件销毁生命周期钩子。清理任务。"""
 
         # 取消后台扫描任务
         try:
             if self._scanner_task is not None:
                 self._scanner_task.cancel()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"取消扫描任务失败: {e}")
 
         return
 
@@ -252,7 +332,8 @@ class StealerPlugin(Star):
                 return json.loads(self.index_path.read_text(encoding="utf-8"))
             
             return await asyncio.to_thread(sync_load_index)
-        except Exception:
+        except Exception as e:
+            logger.error(f"加载索引失败: {e}")
             return {}
 
     async def _save_index(self, idx: dict):
@@ -277,7 +358,8 @@ class StealerPlugin(Star):
                 return json.loads(self.alias_path.read_text(encoding="utf-8"))
             
             return await asyncio.to_thread(sync_load_aliases)
-        except Exception:
+        except Exception as e:
+            logger.error(f"加载别名失败: {e}")
             return {}
 
     async def _save_aliases(self, aliases: dict):
@@ -292,43 +374,7 @@ class StealerPlugin(Star):
         except Exception as e:
             logger.error(f"保存别名文件失败: {e}")
 
-    def _inject_persona_prompt(self):
-        """在所有人格 system prompt 中追加表情标签使用说明。
 
-        参考 astrbot_plugin_meme_manager 的做法，通过 provider_manager.personas
-        直接修改当前加载的人格提示词，而无需用户手动编辑人格。
-        """
-        if self._persona_prompt_injected:
-            return
-        try:
-            personas = self.context.provider_manager.personas
-        except Exception as e:
-            logger.error(f"读取人格列表失败: {e}")
-            return
-        if not personas:
-            return
-
-        # 只在第一次注入时备份
-        if not self._persona_backup:
-            self._persona_backup = copy.deepcopy(personas)
-
-        extra_prompt = (
-            "\n\n[Emoji Stealer Helper]\n"
-            "你可以在合适的时候，为自己的回复附加情绪标签，以驱动本地表情包发送。"
-            "请在回复末尾使用 `&&emotion&&` 形式追加一个英文情绪单词 emotion。"
-            "emotion 必须从以下列表中选择一个: "
-            "happy, neutral, sad, angry, shy, surprised, smirk, cry, confused, embarrassed."
-            "例如: 好的，我知道啦~ &&happy&&\n"
-            "请选择最符合当前整条回复整体情绪的标签。"
-        )
-
-        for p in personas:
-            base = str(p.get("prompt") or "")
-            if extra_prompt.strip() in base:
-                continue
-            p["prompt"] = base + extra_prompt
-
-        self._persona_prompt_injected = True
 
     def _normalize_category(self, raw: str | None) -> str:
         """将模型返回的情绪类别规范化到内部英文标签。
@@ -352,74 +398,11 @@ class StealerPlugin(Star):
             return "neutral" if "neutral" in self.categories else self.categories[0]
 
         # 同义词 / 近义词映射（中文与英文别名）
-        mapping = {
-            # Chinese -> English canonical labels
-            "开心": "happy",
-            "高兴": "happy",
-            "快乐": "happy",
-            "喜悦": "happy",
-            "大笑": "happy",
-            "无语": "neutral",
-            "郁闷": "neutral",
-            "无奈": "neutral",
-            "平静": "neutral",
-            "难过": "sad",
-            "伤心": "sad",
-            "悲伤": "sad",
-            "沮丧": "sad",
-            "生气": "angry",
-            "愤怒": "angry",
-            "暴怒": "angry",
-            "恼火": "angry",
-            "害羞": "shy",
-            "害羞脸红": "shy",
-            "脸红": "shy",
-            "羞涩": "shy",
-            "不好意思": "shy",
-            "震惊": "surprised",
-            "惊讶": "surprised",
-            "吃惊": "surprised",
-            "惊呆": "surprised",
-            "奸笑": "smirk",
-            "坏笑": "smirk",
-            "偷笑": "smirk",
-            "调皮": "smirk",
-            "得意": "smirk",
-            "哭泣": "cry",
-            "哭": "cry",
-            "流泪": "cry",
-            "泪目": "cry",
-            "疑惑": "confused",
-            "疑问": "confused",
-            "困惑": "confused",
-            "迷惑": "confused",
-            "尴尬": "embarrassed",
-            "害臊": "embarrassed",
-            "窘迫": "embarrassed",
-            "难堪": "embarrassed",
-            # English aliases
-            "joy": "happy",
-            "joyful": "happy",
-            "smile": "happy",
-            "angry": "angry",
-            "mad": "angry",
-            "upset": "sad",
-            "sad": "sad",
-            "cry": "cry",
-            "crying": "cry",
-            "shy": "shy",
-            "embarrassed": "embarrassed",
-            "confused": "confused",
-            "surprised": "surprised",
-            "shock": "surprised",
-            "smirk": "smirk",
-            "neutral": "neutral",
-        }
-        if text in mapping and mapping[text] in self.categories:
-            return mapping[text]
+        if text in self._EMOTION_MAPPING and self._EMOTION_MAPPING[text] in self.categories:
+            return self._EMOTION_MAPPING[text]
 
         # 通过包含关系粗略匹配
-        for key, val in mapping.items():
+        for key, val in self._EMOTION_MAPPING.items():
             if key in text and val in self.categories:
                 return val
 
@@ -712,12 +695,67 @@ class StealerPlugin(Star):
             logger.error(f"保存图片失败: {e}")
             return src_path
 
-    def _extract_emotions_from_text(self, text: str) -> tuple[list[str], str]:
-        """从文本中提取情绪关键词，完全在本地完成，不再请求 LLM。
+    def _is_in_parentheses(self, text: str, index: int) -> bool:
+        """判断字符串中指定索引位置是否在括号内。
+        
+        支持圆括号()和方括号[]。
+        """
+        parentheses_count = 0
+        bracket_count = 0
+        
+        for i in range(index):
+            if text[i] == '(':
+                parentheses_count += 1
+            elif text[i] == ')':
+                parentheses_count -= 1
+            elif text[i] == '[':
+                bracket_count += 1
+            elif text[i] == ']':
+                bracket_count -= 1
+        
+        return parentheses_count > 0 or bracket_count > 0
+
+    async def _classify_text_category(self, event: AstrMessageEvent, text: str) -> str:
+        """调用文本模型判断文本情绪并映射到插件分类。"""
+        try:
+            prov_id = await self._pick_text_provider(event)
+            
+            # 使用插件原有的分类体系构建提示词，要求输出&&emotion&&格式
+            categories_str = ", ".join(self.categories)
+            prompt = f"请基于这段文本的情绪选择一个最匹配的类别: {categories_str}。"
+            prompt += "请使用&&emotion&&格式返回，例如&&happy&&、&&sad&&。"
+            prompt += "只返回表情标签，不要添加任何其他内容。文本: " + text
+            
+            if prov_id is None:
+                return ""
+                
+            resp = await self.context.llm_generate(chat_provider_id=str(prov_id), prompt=prompt)
+            txt = resp.completion_text.strip()
+            
+            import re
+            # 提取&&emotion&&格式的内容
+            match = re.search(r'&&([^&&]+)&&', txt)
+            if match:
+                emotion = match.group(1).strip()
+            else:
+                # 如果没有&&格式，直接使用返回值
+                emotion = txt
+            
+            # 使用插件内置的_normalize_category方法进行类别映射
+            normalized_category = self._normalize_category(emotion)
+            return normalized_category if normalized_category in self.categories else ""
+            
+        except Exception as e:
+            logger.error(f"文本情绪分类失败: {e}")
+            return ""
+
+    async def _extract_emotions_from_text(self, event: AstrMessageEvent | None, text: str) -> tuple[list[str], str]:
+        """从文本中提取情绪关键词，本地提取不到时使用 LLM。
 
         支持的形式：
         - 形如 &&开心&& 的显式标记
         - 直接出现的类别关键词（如“开心”“害羞”“哭泣”等），按出现顺序去重
+        - 本地提取不到时调用 LLM 进行情绪分类
         
         返回：
         - 提取到的情绪列表
@@ -728,19 +766,16 @@ class StealerPlugin(Star):
         if not text:
             return [], text
 
-        res: list[str] = []
-        seen: set[str] = set()
-        base = str(text)
-        cleaned_text = base
-        valid_categories = set(self.categories)  # 预加载合法类别集合
-        
-        # 1. 显式包裹标记：&&情绪&&
         import re
         
-        # 首先处理所有标准的&&情绪&&格式
-        # 参考 meme_manager 插件的实现方式
+        res: list[str] = []
+        seen: set[str] = set()
+        cleaned_text = str(text)
+        valid_categories = set(self.categories)
+        
+        # 1. 处理显式包裹标记：&&情绪&&
         hex_pattern = r"&&([^&&]+)&&"
-        matches = re.finditer(hex_pattern, cleaned_text)
+        matches = list(re.finditer(hex_pattern, cleaned_text))
 
         # 收集所有匹配项，避免索引偏移问题
         temp_replacements = []
@@ -749,7 +784,6 @@ class StealerPlugin(Star):
             emotion = match.group(1).strip()
             norm_cat = self._normalize_category(emotion)
             
-            # 合法性验证
             if norm_cat and norm_cat in valid_categories:
                 temp_replacements.append((original, norm_cat))
             else:
@@ -757,139 +791,70 @@ class StealerPlugin(Star):
 
         # 保持原始顺序替换
         for original, emotion in temp_replacements:
-            cleaned_text = cleaned_text.replace(original, "", 1)  # 每次替换第一个匹配项
+            cleaned_text = cleaned_text.replace(original, "", 1)
             if emotion and emotion not in seen:
                 seen.add(emotion)
                 res.append(emotion)
         
-        # 更新base文本，用于后续直接情绪词检测
-        base = cleaned_text
-
-        # 2. 直接出现的情绪词（避免重复，且不匹配括号内的词）
-        # 优化：同时支持中文和英文情绪词的直接检测（参照meme_manager插件的标签处理逻辑）
-        # 修复：增强标签清除功能，确保直接出现的情绪词也能被适当处理
-        import re
-        
-        # 创建中英文情绪词映射
-        emotion_mapping = {
-            "开心": "happy", "高兴": "happy", "快乐": "happy", "喜悦": "happy", "大笑": "happy",
-            "无语": "neutral", "郁闷": "neutral", "无奈": "neutral", "平静": "neutral",
-            "难过": "sad", "伤心": "sad", "悲伤": "sad", "沮丧": "sad",
-            "生气": "angry", "愤怒": "angry", "暴怒": "angry", "恼火": "angry",
-            "害羞": "shy", "害羞脸红": "shy", "脸红": "shy", "羞涩": "shy", "不好意思": "shy",
-            "震惊": "surprised", "惊讶": "surprised", "吃惊": "surprised", "惊呆": "surprised",
-            "奸笑": "smirk", "坏笑": "smirk", "偷笑": "smirk", "调皮": "smirk", "得意": "smirk",
-            "哭泣": "cry", "哭": "cry", "流泪": "cry", "泪目": "cry",
-            "疑惑": "confused", "疑问": "confused", "困惑": "confused", "迷惑": "confused",
-            "尴尬": "embarrassed", "害臊": "embarrassed", "窘迫": "embarrassed", "难堪": "embarrassed"
-        }
-        
-        # 定义一个辅助函数：判断一个字符串是否在括号内
-        def is_in_parentheses(text, index):
-            # 统计括号对
-            parentheses_count = 0
-            bracket_count = 0
-            
-            for i in range(index):
-                if text[i] == '(':
-                    parentheses_count += 1
-                elif text[i] == ')':
-                    parentheses_count -= 1
-                elif text[i] == '[':
-                    bracket_count += 1
-                elif text[i] == ']':
-                    bracket_count -= 1
-            
-            # 如果任何一种括号没有闭合，则当前位置在括号内
-            return parentheses_count > 0 or bracket_count > 0
-        
-        # 先检查英文情绪词
+        # 2. 处理直接出现的英文情绪词（直接匹配分类）
         for cat in self.categories:
-            # 提取所有匹配项，无论是否在括号内
-            # 使用更灵活的模式匹配，适应中文环境中的英文单词
-            pattern = re.escape(cat)
-            matches = list(re.finditer(pattern, base, re.IGNORECASE))
+            if cat in seen:
+                continue
+                
+            # 使用边界匹配确保是完整单词
+            pattern = rf'\b{re.escape(cat)}\b'
+            matches = list(re.finditer(pattern, cleaned_text, re.IGNORECASE))
             
             # 检查是否有括号外的匹配
-            has_bracket_external_match = False
+            has_external_match = False
             for match in matches:
-                # 检查前后是否是中文字符或边界
-                start = match.start()
-                end = match.end()
-                is_word = True
-                
-                # 检查前面是否是字母或数字
-                if start > 0 and re.match(r'[a-zA-Z0-9]', base[start-1]):
-                    is_word = False
-                # 检查后面是否是字母或数字
-                if end < len(base) and re.match(r'[a-zA-Z0-9]', base[end]):
-                    is_word = False
-                
-                if is_word and not is_in_parentheses(base, start):
-                    has_bracket_external_match = True
+                if not self._is_in_parentheses(cleaned_text, match.start()):
+                    has_external_match = True
                     break
             
-            if has_bracket_external_match:
-                # 检查是否已经提取过该情绪
-                if cat not in seen:
-                    seen.add(cat)
-                    res.append(cat)
-                # 只移除括号外的英文情绪词
-                matches = list(re.finditer(pattern, cleaned_text, re.IGNORECASE))
+            if has_external_match:
+                seen.add(cat)
+                res.append(cat)
                 
-                # 从后往前替换，避免索引偏移
-                for match in reversed(matches):
-                    start = match.start()
-                    end = match.end()
-                    is_word = True
-                    
-                    # 检查前面是否是字母或数字
-                    if start > 0 and re.match(r'[a-zA-Z0-9]', cleaned_text[start-1]):
-                        is_word = False
-                    # 检查后面是否是字母或数字
-                    if end < len(cleaned_text) and re.match(r'[a-zA-Z0-9]', cleaned_text[end]):
-                        is_word = False
-                    
-                    if is_word and not is_in_parentheses(cleaned_text, start):
-                        cleaned_text = cleaned_text[:start] + cleaned_text[end:]
+                # 注意：不再移除英文情绪词，保留原始文本的完整性
+                # 只提取情绪，不修改文本内容
         
-        # 再检查中文情绪词（通过_normalize_category方法映射）
-        # 对情绪词按长度排序，优先处理长的情绪词（避免短词被先处理）
-        sorted_cn_emotions = sorted(emotion_mapping.keys(), key=len, reverse=True)
+        # 3. 处理直接出现的中文情绪词（使用统一的EMOTION_MAPPING）
+        # 按长度排序，优先处理长的情绪词
+        sorted_cn_emotions = sorted(self._EMOTION_MAPPING.keys(), key=len, reverse=True)
         
         for cn_emotion in sorted_cn_emotions:
-            en_emotion = emotion_mapping[cn_emotion]
-            # 提取所有匹配的位置，无论是否在括号内
-            positions = []
-            start = 0
-            
-            while True:
-                pos = cleaned_text.find(cn_emotion, start)
-                if pos == -1:
-                    break
-                positions.append(pos)
-                start = pos + 1  # 从下一个字符开始查找，避免重叠匹配
-            
-            # 检查是否有括号外的匹配
-            has_bracket_external_match = any(not is_in_parentheses(cleaned_text, pos) for pos in positions)
-            
-            if has_bracket_external_match:
-                # 检查是否已经提取过该情绪
-                if en_emotion not in seen:
+            en_emotion = self._EMOTION_MAPPING[cn_emotion]
+            if en_emotion in valid_categories and en_emotion not in seen:
+                positions = []
+                start = 0
+                
+                # 收集所有匹配位置
+                while True:
+                    pos = cleaned_text.find(cn_emotion, start)
+                    if pos == -1:
+                        break
+                    positions.append(pos)
+                    start = pos + 1
+                
+                # 检查是否有括号外的匹配
+                external_positions = [pos for pos in positions if not self._is_in_parentheses(cleaned_text, pos)]
+                
+                if external_positions:
                     seen.add(en_emotion)
                     res.append(en_emotion)
-                
-                # 只移除括号外的中文情绪词，从后往前处理避免索引偏移
-                # 创建一个新的位置列表，只包含括号外的位置
-                external_positions = [pos for pos in positions if not is_in_parentheses(cleaned_text, pos)]
-                
-                # 从后往前替换，避免索引偏移
-                for pos in reversed(external_positions):
-                    cleaned_text = cleaned_text[:pos] + cleaned_text[pos + len(cn_emotion):]
+                    
+                    # 注意：不再移除中文情绪词，保留原始文本的完整性
+                    # 只提取情绪，不修改文本内容
         
-        # 清理多余的空格（保留单个空格，除非测试用例有特殊要求）
-        # 注意：为了保持与测试用例一致，这里使用更宽松的空格清理策略
+        # 清理多余的空格
         cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+
+        # 本地提取不到情绪时，调用 LLM 进行分类
+        if not res and event:
+            llm_emotion = await self._classify_text_category(event, cleaned_text)
+            if llm_emotion and llm_emotion in valid_categories:
+                res.append(llm_emotion)
 
         return res, cleaned_text
 
@@ -908,7 +873,7 @@ class StealerPlugin(Star):
         return await self.context.get_current_chat_provider_id(event.unified_msg_origin)
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
-    async def on_message(self, event: AstrMessageEvent):
+    async def on_message(self, event: AstrMessageEvent, *args, **kwargs):
         """消息监听：偷取消息中的图片并分类存储。"""
         if not self.enabled:
             return
@@ -923,16 +888,16 @@ class StealerPlugin(Star):
                 if not ok:
                     try:
                         await asyncio.to_thread(os.remove, path)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                         logger.error(f"删除文件失败: {e}")
                     continue
                 cat, tags, desc, emotion = await self._classify_image(event, path)
                 # 如果分类为"非表情包"，跳过存储
                 if cat == "非表情包" or emotion == "非表情包":
                     try:
                         await asyncio.to_thread(os.remove, path)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.error(f"删除文件失败: {e}")
                     continue
                 stored = await self._store_image(path, cat)
                 idx = await self._load_index()
@@ -960,50 +925,58 @@ class StealerPlugin(Star):
                 continue
 
     async def _scan_register_emoji_folder(self):
-        base = Path(get_astrbot_data_path()) / "emoji"
-        base.mkdir(parents=True, exist_ok=True)
-        files = []
-        for p in base.iterdir():
-            if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
-                files.append(p)
-        if not files:
-            return
-        idx = await self._load_index()
-        for f in files:
-            try:
-                ok = await self._filter_image(None, f.as_posix())
-                if not ok:
-                    try:
-                        await asyncio.to_thread(os.remove, f.as_posix())
-                    except Exception:
-                        pass
-                    continue
-                cat, tags, desc, emotion = await self._classify_image(None, f.as_posix())
-                # 如果分类为"非表情包"，跳过存储
-                if cat == "非表情包" or emotion == "非表情包":
-                    try:
-                        await asyncio.to_thread(os.remove, f.as_posix())
-                    except Exception:
-                        pass
-                    continue
-                stored = await self._store_image(f.as_posix(), cat)
-                idx[stored] = {
-                    "category": cat,
-                    "tags": tags,
-                    "backend_tag": self.backend_tag,
-                    "created_at": int(asyncio.get_event_loop().time()),
-                    "usage_count": 0,
-                    "desc": desc,
-                    "emotion": emotion,
-                }
+        try:
+            base = Path(get_astrbot_data_path()) / "emoji"
+            base.mkdir(parents=True, exist_ok=True)
+            files = []
+            for p in base.iterdir():
+                if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+                    files.append(p)
+            if not files:
+                return
+            idx = await self._load_index()
+            for f in files:
                 try:
-                    await asyncio.to_thread(os.remove, f.as_posix())
-                except Exception:
-                    pass
-                await self._enforce_capacity(idx)
-                await self._save_index(idx)
-            except Exception:
-                continue
+                    ok = await self._filter_image(None, f.as_posix())
+                    if not ok:
+                        try:
+                            await asyncio.to_thread(os.remove, f.as_posix())
+                        except Exception:
+                            pass
+                        continue
+                    cat, tags, desc, emotion = await self._classify_image(None, f.as_posix())
+                    # 如果分类为"非表情包"，跳过存储
+                    if cat == "非表情包" or emotion == "非表情包":
+                        try:
+                            await asyncio.to_thread(os.remove, f.as_posix())
+                        except Exception:
+                            pass
+                        continue
+                    stored = await self._store_image(f.as_posix(), cat)
+                    # 检查_store_image是否成功保存（返回的路径不等于源路径）
+                    if stored != f.as_posix():
+                        idx[stored] = {
+                            "category": cat,
+                            "tags": tags,
+                            "backend_tag": self.backend_tag,
+                            "created_at": int(asyncio.get_event_loop().time()),
+                            "usage_count": 0,
+                            "desc": desc,
+                            "emotion": emotion,
+                        }
+                        try:
+                            await asyncio.to_thread(os.remove, f.as_posix())
+                        except Exception as e:
+                            logger.error(f"删除源文件失败: {e}")
+                    else:
+                        logger.error(f"保存图片失败，源文件未删除: {f.as_posix()}")
+                except Exception as e:
+                    logger.error(f"处理文件失败: {f.as_posix()}, 错误: {e}")
+            # 在处理完所有文件后再检查容量和保存索引
+            await self._enforce_capacity(idx)
+            await self._save_index(idx)
+        except Exception as e:
+            logger.error(f"扫描注册表情文件夹失败: {e}")
 
     async def _enforce_capacity(self, idx: dict):
         try:
@@ -1065,7 +1038,7 @@ class StealerPlugin(Star):
             logger.debug(f"没有可处理的文本内容，未触发图片发送")
             return
             
-        emotions, cleaned_text = self._extract_emotions_from_text(text)
+        emotions, cleaned_text = await self._extract_emotions_from_text(event, text)
         if not emotions:
             logger.debug(f"未从文本中提取到情绪关键词，未触发图片发送")
             return
@@ -1169,29 +1142,7 @@ class StealerPlugin(Star):
         await self._persist_config()
         yield event.plain_result("已关闭自动发送")
 
-    @meme.command("send")
-    async def meme_send(self, event: AstrMessageEvent, category: str = ""):
-        """手动发送指定分类的一张随机表情包。"""
-        if not self.base_dir:
-            return
-        cat = category or (self.categories[0] if self.categories else "开心")
-        cat_dir = self.base_dir / "categories" / cat
-        if not cat_dir.exists():
-            yield event.plain_result("分类不存在")
-            return
-        files = [p for p in cat_dir.iterdir() if p.is_file()]
-        if not files:
-            yield event.plain_result("该分类暂无表情包")
-            return
-        pick = random.choice(files)
-        idx = await self._load_index()
-        rec = idx.get(pick.as_posix())
-        if isinstance(rec, dict):
-            rec["usage_count"] = int(rec.get("usage_count", 0)) + 1
-            rec["last_used"] = int(asyncio.get_event_loop().time())
-            idx[pick.as_posix()] = rec
-            await self._save_index(idx)
-        yield event.image_result(pick.as_posix())
+
 
     @meme.command("set_vision")
     async def set_vision(self, event: AstrMessageEvent, provider_id: str = ""):
@@ -1349,48 +1300,6 @@ class StealerPlugin(Star):
         p, v = random.choice(cands)
         return (p, str(v.get("desc", "")), str(v.get("emotion", v.get("category", self.categories[0] if self.categories else "开心"))))
 
-    @meme.command("random")
-    async def meme_random(self, event: AstrMessageEvent, count: str = "1"):
-        try:
-            n = int(count)
-        except Exception:
-            n = 1
-        items = await self.get_random_paths(n)
-        if not items:
-            yield event.plain_result("暂无表情包")
-            return
-        path, d, emo = items[0]
-        b64 = await self._file_to_base64(path)
-        yield event.make_result().base64_image(b64)
-
-    @meme.command("find")
-    async def meme_find(self, event: AstrMessageEvent, description: str = ""):
-        if not description:
-            yield event.plain_result("请提供描述")
-            return
-        item = await self.get_by_description_path(description)
-        if not item:
-            yield event.plain_result("未匹配到表情包")
-            return
-        path, d, emo = item
-        b64 = await self._file_to_base64(path)
-        yield event.make_result().base64_image(b64)
-
-    @meme.command("emotion")
-    async def meme_emotion(self, event: AstrMessageEvent, emotion: str = ""):
-        if not emotion:
-            yield event.plain_result("请提供情感标签")
-            return
-        item = await self.get_by_emotion_path(emotion)
-        if not item:
-            yield event.plain_result("未匹配到表情包")
-            return
-        path, d, emo = item
-        b64 = await self._file_to_base64(path)
-        yield event.make_result().base64_image(b64)
-
-    
-
     @filter.permission_type(filter.PermissionType.ADMIN)
     @meme.command("push")
     async def push(self, event: AstrMessageEvent, category: str = "", alias: str = ""):
@@ -1416,5 +1325,6 @@ class StealerPlugin(Star):
         pick = random.choice(files)
         b64 = await self._file_to_base64(pick.as_posix())
         chain = MessageChain().base64_image(b64)
-        await self.context.send_message(umo, chain)
+        # 统一使用yield返回结果，保持交互体验一致
+        yield event.result_with_message_chain(chain)
 
