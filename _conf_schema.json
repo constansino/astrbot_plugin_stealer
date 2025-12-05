@@ -1,13 +1,11 @@
 {
   "enabled": {
     "description": "是否开启偷取表情包",
-    "type": "bool",
-    "default": true
+    "type": "bool"
   },
   "auto_send": {
     "description": "是否自动发送合适的表情包",
-    "type": "bool",
-    "default": true
+    "type": "bool"
   },
   "vision_provider_id": {
     "description": "视觉模型 Provider（用于图片分类）",
@@ -21,45 +19,39 @@
     "hint": "选择主回复/文本分析的提供商 ID",
     "_special": "select_provider"
   },
-  "backend_tag": {
-    "description": "后台标识（用于在索引中标注来源）",
-    "type": "string",
-    "hint": "例如 emoji_stealer，用于识别由本插件偷取的表情包",
-    "default": "emoji_stealer"
-  },
+
   "emoji_chance": {
     "description": "Planner 触发表情动作的基础概率",
-    "type": "float",
-    "default": 0.4
+    "type": "float"
   },
   "max_reg_num": {
     "description": "允许注册的最大表情数量",
-    "type": "int",
-    "default": 100
+    "type": "int"
   },
   "do_replace": {
     "description": "达到上限时是否替换旧表情",
-    "type": "bool",
-    "default": true
+    "type": "bool"
   },
   "check_interval": {
     "description": "扫描/清理/注册的轮询周期（分钟）",
-    "type": "int",
-    "default": 10
+    "type": "int"
   },
   "steal_emoji": {
     "description": "允许自动从 data/emoji 注册新表情",
-    "type": "bool",
-    "default": true
+    "type": "bool"
   },
   "content_filtration": {
     "description": "是否开启内容审核",
-    "type": "bool",
-    "default": false
+    "type": "bool"
   },
   "filtration_prompt": {
     "description": "审核准则提示词",
     "type": "string",
     "default": "符合公序良俗"
+  },
+  "emoji_only": {
+    "description": "是否仅偷取聊天表情包（过滤普通图片/截图/长图）",
+    "type": "bool",
+    "hint": "建议保持开启：结合多模态判断和尺寸/长宽比过滤，仅保存典型聊天用表情包"
   }
 }
