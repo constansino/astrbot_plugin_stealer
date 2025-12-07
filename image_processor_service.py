@@ -161,7 +161,7 @@ class ImageProcessorService:
 
             for attempt in range(max_retries):
                 try:
-                    result = await self.plugin.llm_generate(event, prompt, image_path=img_path, model=model)
+                    result = await self.plugin.context.llm_generate(event, prompt, image_path=img_path, model=model)
                     if result:
                         # 清理结果，只保留情绪词
                         category = result.strip().replace('"', "").replace("'", "")
@@ -217,7 +217,7 @@ class ImageProcessorService:
 
             for attempt in range(max_retries):
                 try:
-                    result = await self.plugin.llm_generate(event, prompt, image_path=img_path, model=model)
+                    result = await self.plugin.context.llm_generate(event, prompt, image_path=img_path, model=model)
                     if result and result.strip() == "是":
                         logger.debug("图片未通过内容过滤")
                         return False

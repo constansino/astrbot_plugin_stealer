@@ -20,53 +20,52 @@ class CommandHandler:
         """开启偷表情包功能。"""
         self.plugin.steal_emoji = True
         self.plugin._persist_config()
-        yield event.plain_result("已开启偷表情包")
+        return event.plain_result("已开启偷表情包")
 
     async def meme_off(self, event: AstrMessageEvent):
         """关闭偷表情包功能。"""
         self.plugin.steal_emoji = False
         self.plugin._persist_config()
-        yield event.plain_result("已关闭偷表情包")
+        return event.plain_result("已关闭偷表情包")
 
     async def auto_on(self, event: AstrMessageEvent):
         """开启自动发送功能。"""
         self.plugin.auto_send = True
         self.plugin._persist_config()
-        yield event.plain_result("已开启自动发送")
+        return event.plain_result("已开启自动发送")
 
     async def auto_off(self, event: AstrMessageEvent):
         """关闭自动发送功能。"""
         self.plugin.auto_send = False
         self.plugin._persist_config()
-        yield event.plain_result("已关闭自动发送")
+        return event.plain_result("已关闭自动发送")
 
     async def set_vision(self, event: AstrMessageEvent, provider_id: str = ""):
         """设置视觉模型。"""
         if not provider_id:
-            yield event.plain_result("请提供视觉模型的 provider_id")
-            return
+            return event.plain_result("请提供视觉模型的 provider_id")
         self.plugin.vision_provider_id = provider_id
         self.plugin._persist_config()
-        yield event.plain_result(f"已设置视觉模型: {provider_id}")
+        return event.plain_result(f"已设置视觉模型: {provider_id}")
 
     async def show_providers(self, event: AstrMessageEvent):
         """显示当前视觉模型。"""
         vp = self.plugin.vision_provider_id or "当前会话"
-        yield event.plain_result(f"视觉模型: {vp}")
+        return event.plain_result(f"视觉模型: {vp}")
 
     async def meme_emoji_only(self, event: AstrMessageEvent, enable: str = ""):
         """切换是否仅偷取表情包模式。"""
         if enable.lower() in ["on", "开启", "true"]:
             self.plugin.emoji_only = True
             self.plugin._persist_config()
-            yield event.plain_result("已开启仅偷取表情包模式")
+            return event.plain_result("已开启仅偷取表情包模式")
         elif enable.lower() in ["off", "关闭", "false"]:
             self.plugin.emoji_only = False
             self.plugin._persist_config()
-            yield event.plain_result("已关闭仅偷取表情包模式")
+            return event.plain_result("已关闭仅偷取表情包模式")
         else:
             status = "开启" if self.plugin.emoji_only else "关闭"
-            yield event.plain_result(f"当前仅偷取表情包模式: {status}")
+            return event.plain_result(f"当前仅偷取表情包模式: {status}")
 
     async def status(self, event: AstrMessageEvent):
         """显示当前偷取状态与后台标识。"""
@@ -76,7 +75,7 @@ class CommandHandler:
         idx = await self.plugin._load_index()
         # 添加视觉模型信息
         vision_model = self.plugin.vision_provider_id or "未设置（将使用当前会话默认模型）"
-        yield event.plain_result(
+        return event.plain_result(
             f"偷取: {st_on}\n自动发送: {st_auto}\n仅偷取表情包: {st_emoji_only}\n已注册数量: {len(idx)}\n概率: {self.plugin.emoji_chance}\n上限: {self.plugin.max_reg_num}\n替换: {self.plugin.do_replace}\n维护周期: {self.plugin.maintenance_interval}min\n审核: {self.plugin.content_filtration}\n视觉模型: {vision_model}"
         )
 
@@ -89,22 +88,18 @@ class CommandHandler:
             if alias in aliases:
                 aliases[alias]
             else:
-                yield event.plain_result("别名不存在")
-                return
+                return event.plain_result("别名不存在")
         cat = category or (self.plugin.categories[0] if self.plugin.categories else "happy")
         cat_dir = self.plugin.base_dir / "categories" / cat
         if not cat_dir.exists():
-            yield event.plain_result("分类不存在")
-            return
+            return event.plain_result("分类不存在")
         files = [p for p in cat_dir.iterdir() if p.is_file()]
         if not files:
-            yield event.plain_result("该分类暂无表情包")
-            return
+            return event.plain_result("该分类暂无表情包")
         pick = random.choice(files)
         b64 = await self.plugin._file_to_base64(pick.as_posix())
         chain = event.make_result().base64_image(b64).message_chain
-        # 统一使用yield返回结果，保持交互体验一致
-        yield event.result_with_message_chain(chain)
+        return event.result_with_message_chain(chain)
 
     async def debug_image(self, event: AstrMessageEvent):
         """调试命令：处理当前消息中的图片并显示详细信息。"""
@@ -112,8 +107,7 @@ class CommandHandler:
         imgs = [comp for comp in event.message_obj.message if isinstance(comp, event.context.get_message_component_class("Image"))]
 
         if not imgs:
-            yield event.plain_result("当前消息中没有图片")
-            return
+            return event.plain_result("当前消息中没有图片")
 
         # 处理第一张图片
         img = imgs[0]
@@ -124,15 +118,13 @@ class CommandHandler:
             # 检查路径安全性
             is_safe, safe_path = self.plugin._is_safe_path(temp_path)
             if not is_safe:
-                yield event.plain_result("图片路径不安全")
-                return
+                return event.plain_result("图片路径不安全")
 
             temp_path = safe_path
 
             # 确保临时文件存在且可访问
             if not Path(temp_path).exists():
-                yield event.plain_result("临时文件不存在")
-                return
+                return event.plain_result("临时文件不存在")
 
             # 开始调试处理
             result_msg = "=== 图片调试信息 ===\n"
@@ -143,10 +135,10 @@ class CommandHandler:
             result_msg += f"文件大小: {size / 1024:.2f} KB\n"
 
             # 2. 元数据过滤结果
-            from .image_processor import PILImage
-            if PILImage is not None:
+            # 直接使用plugin中的PILImage引用
+            if self.plugin.PILImage is not None:
                 try:
-                    with PILImage.open(temp_path) as im:
+                    with self.plugin.PILImage.open(temp_path) as im:
                         width, height = im.size
                     result_msg += f"分辨率: {width}x{height}\n"
                     aspect_ratio = max(width, height) / min(width, height) if min(width, height) > 0 else 0
@@ -169,8 +161,8 @@ class CommandHandler:
             else:
                 result_msg += "图片处理失败\n"
 
-            yield event.plain_result(result_msg)
+            return event.plain_result(result_msg)
 
         except Exception as e:
             logger.error(f"调试图片失败: {e}")
-            yield event.plain_result(f"调试失败: {str(e)}")
+            return event.plain_result(f"调试失败: {str(e)}")

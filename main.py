@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import os
 import random
@@ -6,10 +7,8 @@ from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.event.filter import (
-    event_message_type, platform_adapter_type, on_decorating_result,
-    command, permission_type, EventMessageType, PlatformAdapterType, PermissionType
-)
+from astrbot.api.event import filter
+from astrbot.api.event.filter import (EventMessageType, PlatformAdapterType, PermissionType)
 from astrbot.api.message_components import Image, Plain
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_root
@@ -18,14 +17,11 @@ from .cache_service import CacheService
 
 # 导入新创建的服务类
 from .command_handler import CommandHandler
-from .config_manager import PluginConfigManager
 
 # 导入原有服务类 - 使用标准的相对导入
 from .config_service import ConfigService
-from .emotion_analyzer import EmotionAnalyzer
 from .emotion_analyzer_service import EmotionAnalyzerService
 from .event_handler import EventHandler
-from .image_processor import ImageProcessor
 from .image_processor_service import ImageProcessorService
 from .task_scheduler import TaskScheduler
 
@@ -98,14 +94,12 @@ class StealerPlugin(Star):
         self.categories_dir: Path = self.base_dir / "categories"
         self.cache_dir: Path = self.base_dir / "cache"
 
-        # 人格注入相关属性
-        self.prompt_head = ""
-        self.prompt_tail_1 = ""
-        self.prompt_tail_2 = ""
-        self.max_emotions_per_message = 1
-        self.persona_backup = None
+        # 初始化人格注入相关属性
+        self.prompt_head: str = ""
+        self.prompt_tail: str = ""
+        self.persona_backup: dict = {}
 
-        # 初始化原有服务类
+        # 初始化服务类
         self.config_service = ConfigService(
             base_dir=self.base_dir,
             astrbot_config=config
@@ -142,26 +136,13 @@ class StealerPlugin(Star):
         for category in self.categories:
             (self.categories_dir / category).mkdir(parents=True, exist_ok=True)
 
-        # 初始化原有其他服务类
+        # 初始化核心服务类
         self.cache_service = CacheService(self.cache_dir)
-        self.image_processor = ImageProcessor(
-            context=self.context,
-            base_dir=self.base_dir,  # 直接传递Path对象，不再转换为字符串
-            vision_provider_id=self.vision_provider_id,
-            cache_service=self.cache_service
-        )
-        self.emotion_analyzer = EmotionAnalyzer(
-            categories=self.categories,
-            context=self.context
-        )
-        self.task_scheduler = TaskScheduler()
-
-        # 初始化新创建的服务类
-        self.config_manager = PluginConfigManager(self)
         self.command_handler = CommandHandler(self)
         self.event_handler = EventHandler(self)
         self.image_processor_service = ImageProcessorService(self)
         self.emotion_analyzer_service = EmotionAnalyzerService(self)
+        self.task_scheduler = TaskScheduler()
 
         # 运行时属性
         self.backend_tag: str = self.BACKEND_TAG
@@ -169,38 +150,7 @@ class StealerPlugin(Star):
 
     # _clean_cache方法已迁移到CacheService类
 
-    def _reload_personas(self):
-        """重新注入人格"""
-        # 构建情绪分类的描述字符串
-        categories_desc = "\n"
-        for category in self.categories:
-            categories_desc += f"- {category}\n"
 
-        # 构建人格注入的提示词
-        self.prompt_head = "请在回复用户时，根据当前对话内容分析情绪，并将分析出的情绪用&&包裹，放在回复的开头，例如：&&happy&&你好啊！\n"
-        self.prompt_head += f"预设情绪列表：{categories_desc}"
-
-        self.prompt_tail_1 = "每次只分析出一种情绪。\n"
-
-        self.prompt_tail_2 = "\n分析情绪时，请遵循以下规则：\n"
-        self.prompt_tail_2 += "1. 只使用预设的情绪列表中的情绪标签\n"
-        self.prompt_tail_2 += "2. 情绪分析要准确，不要随意添加情绪\n"
-        self.prompt_tail_2 += "3. 不要在回复中直接提及情绪分析的过程\n"
-
-        # 合并提示词
-        self.sys_prompt_add = self.prompt_head + self.prompt_tail_1 + self.prompt_tail_2
-
-        # 获取当前的所有人格
-        personas = self.context.provider_manager.personas
-
-        # 保存原始人格
-        if self.persona_backup is None:
-            import copy
-            self.persona_backup = copy.deepcopy(personas)
-
-        # 注入新的人格
-        for persona, persona_backup in zip(personas, self.persona_backup):
-            persona["prompt"] = persona_backup["prompt"] + self.sys_prompt_add
 
     def _update_config_from_dict(self, config_dict: dict):
         """从配置字典更新插件配置。"""
@@ -234,7 +184,7 @@ class StealerPlugin(Star):
                 self.categories = self.config_service.get_config("categories") or self.CATEGORIES
 
                 # 更新其他服务的配置
-                self.image_processor.update_config(
+                self.image_processor_service.update_config(
                     categories=self.categories,
                     content_filtration=self.content_filtration,
                     filtration_prompt=self.filtration_prompt,
@@ -242,7 +192,7 @@ class StealerPlugin(Star):
                     emoji_only=self.emoji_only
                 )
 
-                self.emotion_analyzer.update_config(
+                self.emotion_analyzer_service.update_config(
                     categories=self.categories
                 )
         except Exception as e:
@@ -311,7 +261,7 @@ class StealerPlugin(Star):
             self.task_scheduler.create_task("scanner_loop", self._scanner_loop())
 
             # 加载并注入人格
-            self._reload_personas()
+            await self._reload_personas()
 
         except Exception as e:
             logger.error(f"初始化插件失败: {e}")
@@ -324,22 +274,69 @@ class StealerPlugin(Star):
             # 使用任务调度器停止扫描任务
             self.task_scheduler.cancel_task("scanner_loop")
 
+            # 恢复原始人格
+            if hasattr(self.context, 'provider_manager') and hasattr(self.context.provider_manager, 'personas') and self.persona_backup:
+                self.context.provider_manager.personas = self.persona_backup
+
             # 清理各服务资源
             self.cache_service.cleanup()
-            self.image_processor.cleanup()
-            self.emotion_analyzer.cleanup()
             self.task_scheduler.cleanup()
             self.config_service.cleanup()
-
-            # 恢复原始人格
-            if self.persona_backup and hasattr(self.context, "persona") and isinstance(self.context.persona, dict):
-                self.context.persona["prompt"] = self.persona_backup
-                logger.info("已恢复原始人格")
 
         except Exception as e:
             logger.error(f"终止插件失败: {e}")
 
         return
+
+    async def _reload_personas(self):
+        """重新加载人格配置并注入情绪选择提醒。
+
+        该方法会获取当前的人格配置，在原始人格的基础上添加情绪选择提醒，
+        并保存原始人格的备份以便在插件终止时恢复。
+        """
+        try:
+            from astrbot.api import logger
+
+            # 构建情绪分类字符串
+            categories_str = ", ".join(self.categories)
+            
+            # 生成系统提示添加内容
+            sys_prompt_add = f"\n\n根据对话内容选择一个最匹配的情绪类别：{categories_str}。"
+
+            # 获取当前人格配置
+            if hasattr(self.context, 'persona_manager'):
+                # 获取所有人格
+                all_personas = await self.context.persona_manager.get_all_personas()
+                
+                # 首次调用时备份原始人格
+                if not self.persona_backup:
+                    self.persona_backup = {}
+                    for persona in all_personas:
+                        self.persona_backup[persona.persona_id] = persona.system_prompt
+
+                # 遍历人格配置，在原始人格的基础上添加情绪选择提醒
+                for persona in all_personas:
+                    # 检查是否已经注入过情绪提醒
+                    if "根据对话内容选择一个最匹配的情绪类别" in persona.system_prompt:
+                        continue
+                        
+                    # 在原始人格的基础上添加情绪选择提醒
+                    original_prompt = self.persona_backup.get(persona.persona_id, persona.system_prompt)
+                    new_prompt = original_prompt + sys_prompt_add
+                    
+                    # 使用PersonaManager的update_persona方法更新人格配置
+                    await self.context.persona_manager.update_persona(
+                        persona_id=persona.persona_id,
+                        system_prompt=new_prompt,
+                        begin_dialogs=persona.begin_dialogs,
+                        tools=persona.tools
+                    )
+
+                logger.info("已成功注入情绪选择提醒到人格配置中")
+            else:
+                logger.error("无法访问persona_manager")
+        except Exception as e:
+            logger.error(f"注入情绪选择提醒失败: {e}")
 
     def _persist_config(self):
         """持久化插件运行配置。"""
@@ -435,8 +432,8 @@ class StealerPlugin(Star):
             (category, tags, desc, emotion): 类别、标签、详细描述、情感标签。
         """
         try:
-            # 委托给ImageProcessor类处理
-            result = await self.image_processor.classify_image(
+            # 委托给ImageProcessorService类处理
+            result = await self.image_processor_service.classify_image(
                 event=event,
                 file_path=file_path,
                 emoji_only=self.emoji_only,
@@ -502,8 +499,8 @@ class StealerPlugin(Star):
             (成功与否, 更新后的索引字典)
         """
         try:
-            # 委托给ImageProcessor类处理
-            success, updated_idx = await self.image_processor.process_image(
+            # 委托给ImageProcessorService类处理
+            success, updated_idx = await self.image_processor_service.process_image(
                 event=event,
                 file_path=file_path,
                 is_temp=is_temp,
@@ -638,8 +635,8 @@ class StealerPlugin(Star):
 
         return True, normalized_path
 
-    @event_message_type(EventMessageType.ALL)
-    @platform_adapter_type(PlatformAdapterType.ALL)
+    @filter.event_message_type(EventMessageType.ALL)
+    @filter.platform_adapter_type(PlatformAdapterType.ALL)
     async def on_message(self, event: AstrMessageEvent, *args, **kwargs):
         """消息监听：偷取消息中的图片并分类存储。"""
         # 委托给 EventHandler 类处理
@@ -668,7 +665,7 @@ class StealerPlugin(Star):
 
 
 
-    @on_decorating_result()
+    @filter.on_decorating_result()
     async def before_send(self, event: AstrMessageEvent, *args, **kwargs):
         if not self.auto_send or not self.base_dir:
             return
@@ -803,29 +800,29 @@ class StealerPlugin(Star):
         # 设置新的结果对象
         event.set_result(new_result)
 
-    @command("meme on")
+    @filter.command("meme on")
     async def meme_on(self, event: AstrMessageEvent):
         """开启偷表情包功能。"""
         return await self.command_handler.meme_on(event)
 
-    @command("meme off")
+    @filter.command("meme off")
     async def meme_off(self, event: AstrMessageEvent):
         """关闭偷表情包功能。"""
         return await self.command_handler.meme_off(event)
 
-    @command("meme auto_on")
+    @filter.command("meme auto_on")
     async def auto_on(self, event: AstrMessageEvent):
         """开启自动发送功能。"""
         return await self.command_handler.auto_on(event)
 
-    @command("meme auto_off")
+    @filter.command("meme auto_off")
     async def auto_off(self, event: AstrMessageEvent):
         """关闭自动发送功能。"""
         return await self.command_handler.auto_off(event)
 
 
 
-    @command("meme set_vision")
+    @filter.command("meme set_vision")
     async def set_vision(self, event: AstrMessageEvent, provider_id: str = ""):
         if not provider_id:
             yield event.plain_result("请提供视觉模型的 provider_id")
@@ -836,14 +833,14 @@ class StealerPlugin(Star):
 
 
 
-    @command("meme show_providers")
+    @filter.command("meme show_providers")
     async def show_providers(self, event: AstrMessageEvent):
         vp = self.vision_provider_id or "当前会话"
         yield event.plain_result(f"视觉模型: {vp}")
 
 
 
-    @command("meme emoji_only")
+    @filter.command("meme emoji_only")
     async def meme_emoji_only(self, event: AstrMessageEvent, enable: str = ""):
         """切换是否仅偷取表情包模式。"""
         if enable.lower() in ["on", "开启", "true"]:
@@ -858,7 +855,7 @@ class StealerPlugin(Star):
             status = "开启" if self.emoji_only else "关闭"
             yield event.plain_result(f"当前仅偷取表情包模式: {status}")
 
-    @command("meme status")
+    @filter.command("meme status")
     async def status(self, event: AstrMessageEvent):
         """显示当前偷取状态与后台标识。"""
         st_on = "开启" if self.enabled else "关闭"
@@ -951,8 +948,8 @@ class StealerPlugin(Star):
         p, v = random.choice(cands)
         return (p, str(v.get("desc", "")), str(v.get("emotion", v.get("category", self.categories[0] if self.categories else "开心"))))
 
-    @permission_type(PermissionType.ADMIN)
-    @command("meme push")
+    @filter.permission_type(PermissionType.ADMIN)
+    @filter.command("meme push")
     async def push(self, event: AstrMessageEvent, category: str = "", alias: str = ""):
         if not self.base_dir:
             return
@@ -978,8 +975,8 @@ class StealerPlugin(Star):
         # 统一使用yield返回结果，保持交互体验一致
         yield event.result_with_message_chain(chain)
 
-    @permission_type(PermissionType.ADMIN)
-    @command("meme debug_image")
+    @filter.permission_type(PermissionType.ADMIN)
+    @filter.command("meme debug_image")
     async def debug_image(self, event: AstrMessageEvent):
         """调试命令：处理当前消息中的图片并显示详细信息"""
 

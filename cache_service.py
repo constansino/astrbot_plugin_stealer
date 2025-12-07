@@ -13,24 +13,23 @@ class CacheService:
     # 缓存最大大小
     _CACHE_MAX_SIZE = 1000
 
-    def __init__(self, cache_dir: str | Path):
+    def __init__(self, cache_dir: str | Path = None):
         """初始化缓存服务。
 
         Args:
-            cache_dir: 缓存文件存储目录
+            cache_dir: 缓存文件存储目录，如果为None则使用默认目录
         """
+        if not cache_dir:
+            from astrbot.common.tools.star_tools import StarTools
+            cache_dir = Path(StarTools.get_data_dir()) / "stealer" / "cache"
+        
         self._cache_dir = Path(cache_dir)
-        # 创建缓存目录
         try:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"缓存目录创建成功: {self._cache_dir}")
         except Exception as e:
             logger.error(f"创建缓存目录 {self._cache_dir} 失败: {e}")
-            # 如果目录创建失败，使用当前工作目录下的缓存目录作为备选
-            fallback_cache_dir = Path(os.getcwd()) / "cache"
-            fallback_cache_dir.mkdir(parents=True, exist_ok=True)
-            self._cache_dir = fallback_cache_dir
-            logger.info(f"使用备选缓存目录: {self._cache_dir}")
+            raise Exception(f"无法创建缓存目录: {e}") from e
 
         # 初始化不同类型的缓存
         self._caches: dict[str, dict[str, Any]] = {
@@ -74,16 +73,8 @@ class CacheService:
             logger.info(f"缓存文件 {cache_file} 保存成功")
         except Exception as e:
             logger.error(f"保存缓存文件 {cache_file} 失败: {e}")
-            # 如果保存失败，再次尝试使用备选目录
-            try:
-                fallback_cache_dir = Path(os.getcwd()) / "cache"
-                fallback_cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file = fallback_cache_dir / f"{cache_name}.json"
-                with open(cache_file, "w", encoding="utf-8") as f:
-                    json.dump(self._caches[cache_name], f, ensure_ascii=False, indent=2)
-                logger.info(f"使用备选缓存目录保存成功: {cache_file}")
-            except Exception as fallback_e:
-                logger.error(f"使用备选目录保存缓存文件 {cache_name} 也失败: {fallback_e}")
+            # 如果保存失败，不再尝试备选目录
+            logger.error(f"保存缓存文件失败，不再尝试备选目录: {e}")
 
     def _clean_cache(self, cache: dict[str, Any]) -> None:
         """清理缓存，保持在最大大小以下。
