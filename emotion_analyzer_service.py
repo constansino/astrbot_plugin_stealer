@@ -1,12 +1,17 @@
-import logging
 import re
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-
-logger = logging.getLogger(__name__)
 
 class EmotionAnalyzerService:
     """情感分析服务类，处理文本情绪分析和映射。"""
+
+    # 正则表达式模式常量
+    HEX_PATTERN = re.compile(r"&&([^&]+?)&&")
+    BRACKET_PATTERN = re.compile(r"\[([^\[\]]+)\]")
+    PAREN_PATTERN = re.compile(r"\(([^()]+)\)")
+    HTML_TAG_PATTERN = re.compile(r"<.*?>")
+    WHITESPACE_PATTERN = re.compile(r"\s+")
 
     # 情绪映射规则
     EMOTION_MAPPING = {
@@ -103,8 +108,7 @@ class EmotionAnalyzerService:
             valid_categories = set(self.plugin_instance.categories if hasattr(self.plugin_instance, "categories") else [])
 
             # 1. 处理显式包裹标记：&&情绪&&
-            hex_pattern = r"&&([^&]+?)&&"
-            matches = list(re.finditer(hex_pattern, cleaned_text))
+            matches = list(self.HEX_PATTERN.finditer(cleaned_text))
 
             # 收集所有匹配项，避免索引偏移问题
             temp_replacements = []
@@ -127,8 +131,7 @@ class EmotionAnalyzerService:
 
             # 2. 替代标记处理（如[emotion]、(emotion)等）
             # 处理[emotion]格式
-            bracket_pattern = r"\[([^\[\]]+)\]"
-            matches = list(re.finditer(bracket_pattern, cleaned_text))
+            matches = list(self.BRACKET_PATTERN.finditer(cleaned_text))
             bracket_replacements = []
             invalid_brackets = []
 
@@ -154,8 +157,7 @@ class EmotionAnalyzerService:
                     res.append(emotion)
 
             # 处理(emotion)格式
-            paren_pattern = r"\(([^()]+)\)"
-            matches = list(re.finditer(paren_pattern, cleaned_text))
+            matches = list(self.PAREN_PATTERN.finditer(cleaned_text))
             paren_replacements = []
             invalid_parens = []
 
@@ -183,7 +185,7 @@ class EmotionAnalyzerService:
                     res.append(emotion)
 
             # 3. 清理文本，移除HTML标签
-            cleaned_text = re.sub(r"<.*?>", "", cleaned_text)
+            cleaned_text = self.HTML_TAG_PATTERN.sub("", cleaned_text)
 
             # 4. 提取情绪关键词
             for cat, keywords in self.EMOTION_MAPPING.items():
@@ -195,7 +197,7 @@ class EmotionAnalyzerService:
                         break
 
             # 清理多余的空格
-            cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
+            cleaned_text = self.WHITESPACE_PATTERN.sub(" ", cleaned_text).strip()
 
             return res, cleaned_text
         except Exception as e:

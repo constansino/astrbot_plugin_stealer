@@ -1,9 +1,49 @@
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, List
 
 from astrbot.api import AstrBotConfig, logger
+from pydantic import BaseModel, Field, model_validator
 
+
+class PluginConfig(BaseModel):
+    """插件配置的Pydantic模型，用于简化配置验证逻辑。"""
+    auto_send: bool = Field(default=True, description="是否自动随聊追加表情包")
+    vision_provider_id: Optional[str] = Field(default=None, description="视觉模型提供商ID")
+    emoji_chance: float = Field(default=0.4, description="触发表情动作的基础概率")
+    max_reg_num: int = Field(default=100, description="允许注册的最大表情数量")
+    do_replace: bool = Field(default=True, description="达到上限时是否替换旧表情")
+    maintenance_interval: int = Field(default=10, description="后台维护任务的执行周期")
+    steal_emoji: bool = Field(default=True, description="是否开启表情包偷取和清理功能")
+    content_filtration: bool = Field(default=False, description="是否开启内容审核")
+    filtration_prompt: str = Field(default="符合公序良俗", description="内容审核提示词")
+    emoji_only: bool = Field(default=True, description="是否仅偷取聊天表情包")
+    raw_retention_hours: int = Field(default=24, description="raw目录图片保留期限")
+    raw_clean_interval: int = Field(default=3600, description="raw目录清理时间间隔")
+    categories: List[str] = Field(default_factory=lambda: ["happy", "sad", "angry", "shy", "surprised", "smirk", "cry", "confused", "embarrassed", "love", "disgust", "fear", "excitement", "tired"], description="分类列表")
+    config_version: str = Field(default="1.0.0", description="配置版本")
+    
+    @model_validator(mode='before')
+    @classmethod
+    def validate_fields(cls, data: Any) -> Any:
+        """在验证前对字段进行预处理。"""
+        if isinstance(data, dict):
+            # 确保emoji_chance在0-1之间
+            if 'emoji_chance' in data:
+                data['emoji_chance'] = max(0.0, min(1.0, data['emoji_chance']))
+            
+            # 确保maintenance_interval大于0
+            if 'maintenance_interval' in data and data['maintenance_interval'] <= 0:
+                data['maintenance_interval'] = 10
+            
+            # 确保max_reg_num大于0
+            if 'max_reg_num' in data and data['max_reg_num'] <= 0:
+                data['max_reg_num'] = 100
+            
+            # 确保filtration_prompt不为空
+            if 'filtration_prompt' in data and not data['filtration_prompt']:
+                data['filtration_prompt'] = "符合公序良俗"
+        return data
 
 class ConfigManager:
     """统一的配置管理器，负责配置的加载、更新、验证和持久化。"""
@@ -75,95 +115,16 @@ class ConfigManager:
         self._migrate_config()
 
     def _validate_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        """验证配置的类型和范围。"""
-        validated_config = {}
-
-        for key, value in config.items():
-            if key not in self.schema:
-                continue
-
-            schema_props = self.schema[key]
-            expected_type = schema_props.get("type")
-
-            if expected_type:
-                # 验证类型
-                if expected_type == "bool":
-                    if isinstance(value, bool):
-                        validated_config[key] = value
-                    else:
-                        validated_config[key] = bool(value)
-                elif expected_type == "int":
-                    if isinstance(value, int):
-                        validated_config[key] = value
-                    else:
-                        try:
-                            validated_config[key] = int(value)
-                        except (ValueError, TypeError):
-                            validated_config[key] = self.defaults.get(key)
-                elif expected_type == "float":
-                    if isinstance(value, (int, float)):
-                        validated_config[key] = float(value)
-                    else:
-                        try:
-                            validated_config[key] = float(value)
-                        except (ValueError, TypeError):
-                            validated_config[key] = self.defaults.get(key)
-                elif expected_type == "string":
-                    # 严格验证字符串类型，不进行强制转换
-                    if isinstance(value, str):
-                        # 检查字符串格式和范围（如果schema中定义了）
-                        if "min_length" in schema_props and len(value) < schema_props["min_length"]:
-                            validated_config[key] = self.defaults.get(key)
-                        elif "max_length" in schema_props and len(value) > schema_props["max_length"]:
-                            validated_config[key] = value[:schema_props["max_length"]]
-                        elif "pattern" in schema_props:
-                            import re
-                            if re.match(schema_props["pattern"], value):
-                                validated_config[key] = value
-                            else:
-                                validated_config[key] = self.defaults.get(key)
-                        else:
-                            validated_config[key] = value
-                    else:
-                        # 不进行强制转换，使用默认值
-                        validated_config[key] = self.defaults.get(key)
-                elif expected_type == "array":
-                    if isinstance(value, list):
-                        validated_config[key] = value
-                    else:
-                        validated_config[key] = self.defaults.get(key)
-            else:
-                # 如果没有指定类型，直接使用值
-                validated_config[key] = value
-
-        # 添加额外的范围验证
-        # emoji_chance 应该在 0-1 之间
-        if "emoji_chance" in validated_config:
-            emoji_chance = validated_config["emoji_chance"]
-            validated_config["emoji_chance"] = max(0.0, min(1.0, emoji_chance))
-
-        # maintenance_interval 应该大于 0
-        if "maintenance_interval" in validated_config:
-            maintenance_interval = validated_config["maintenance_interval"]
-            if maintenance_interval <= 0:
-                validated_config["maintenance_interval"] = self.defaults.get("maintenance_interval")
-
-        # max_reg_num 应该大于 0
-        if "max_reg_num" in validated_config:
-            max_reg_num = validated_config["max_reg_num"]
-            if max_reg_num <= 0:
-                validated_config["max_reg_num"] = self.defaults.get("max_reg_num")
-
-        # filtration_prompt 应该不为空
-        if "filtration_prompt" in validated_config and not validated_config["filtration_prompt"]:
-            validated_config["filtration_prompt"] = self.defaults.get("filtration_prompt")
-
-        # 确保所有必需的配置项都存在
-        for key in self.defaults:
-            if key not in validated_config:
-                validated_config[key] = self.defaults[key]
-
-        return validated_config
+        """使用Pydantic模型验证配置的类型和范围。"""
+        try:
+            # 使用PluginConfig模型进行验证
+            validated_config = PluginConfig.model_validate(config).model_dump()
+            return validated_config
+        except Exception as e:
+            logger.error(f"配置验证失败: {e}")
+            logger.debug(f"原始配置: {config}")
+            # 如果验证失败，返回默认配置
+            return PluginConfig().model_dump()
 
     def _migrate_config(self) -> None:
         """迁移旧版本配置到新版本格式。"""

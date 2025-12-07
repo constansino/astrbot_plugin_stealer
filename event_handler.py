@@ -30,14 +30,8 @@ class EventHandler:
     # @platform_adapter_type(PlatformAdapterType.ALL)
     async def on_message(self, event: AstrMessageEvent, *args, **kwargs):
         """消息监听：偷取消息中的图片并分类存储。"""
-        # 检查参数类型，处理参数顺序错误的情况
         plugin_instance = self.plugin
         message_event = event
-
-        if isinstance(self.plugin, AstrMessageEvent) and isinstance(event, self.plugin.__class__):
-            # 参数顺序错误，交换参数
-            plugin_instance = event
-            message_event = self.plugin
 
         if not plugin_instance.steal_emoji:
             return
@@ -51,8 +45,6 @@ class EventHandler:
                 temp_path: str = await img.convert_to_file_path()
 
                 # 检查路径安全性
-                is_safe: bool
-                safe_path: str
                 is_safe, safe_path = plugin_instance._is_safe_path(temp_path)
                 if not is_safe:
                     logger.warning(f"不安全的图片路径: {temp_path}")
@@ -66,8 +58,6 @@ class EventHandler:
                     continue
 
                 # 使用统一的图片处理方法
-                success: bool
-                idx: Optional[dict]
                 success, idx = await plugin_instance._process_image(message_event, temp_path, is_temp=True)
                 if success and idx:
                     await plugin_instance._save_index(idx)

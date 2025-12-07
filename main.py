@@ -271,7 +271,6 @@ class StealerPlugin(Star):
             self.task_scheduler.create_task("scanner_loop", self._scanner_loop())
 
             # 加载并注入人格
-            import copy
             personas = self.context.provider_manager.personas
             self.persona_backup = copy.deepcopy(personas)
             await self._reload_personas()
@@ -638,54 +637,59 @@ class StealerPlugin(Star):
         Returns:
             tuple[bool, str]: (是否安全, 规范化后的安全路径)
         """
-        # 处理路径格式问题并防止路径遍历攻击
-        if not os.path.isabs(path):
-            # 使用 AstrBot 核心提供的路径获取函数来确保在任何环境（包括 Docker）中都能正确获取路径
-            if path.startswith("data/") or path.startswith("data\\"):
-                # 如果是相对于 data 目录的路径
-                relative_path = path[5:]
-                # 安全检查：确保相对路径不包含路径遍历
-                if ".." in relative_path.replace("\\", "/").split("/"):
-                    logger.error(f"检测到路径遍历尝试: {path}")
-                    return False, path
-                path = os.path.join(get_astrbot_data_path(), relative_path)
-            elif path.startswith("AstrBot/") or path.startswith("AstrBot\\"):
-                # 如果是AstrBot开头的路径，使用get_astrbot_root()作为基准
-                # 安全检查：确保路径不包含路径遍历
-                # 计算正确的前缀长度
-                prefix_len = 8 if path.startswith("AstrBot\\") else 7  # 'AstrBot\\'长度为8，'AstrBot/'长度为7
-                relative_path = path[prefix_len:]  # 移除 'AstrBot/' 或 'AstrBot\\' 前缀
-                if ".." in relative_path.replace("\\", "/").split("/"):
-                    logger.error(f"检测到路径遍历尝试: {path}")
-                    return False, path
-                path = os.path.join(get_astrbot_root(), relative_path)
-            else:
-                # 尝试使用当前工作目录作为基准
-                path = os.path.abspath(path)
-
-        # 安全检查：确保最终路径在预期的目录内
-        expected_directories = [
-            get_astrbot_data_path(),
-            get_astrbot_root(),
-            os.getcwd()
-        ]
-
-        # 规范化路径以消除任何路径遍历
-        normalized_path = os.path.normpath(path)
-
-        # 检查路径是否在预期目录内
-        is_safe = False
-        for expected_dir in expected_directories:
-            normalized_expected = os.path.normpath(expected_dir)
-            if normalized_path.startswith(normalized_expected + os.sep):
-                is_safe = True
-                break
-
-        if not is_safe:
-            logger.error(f"检测到不安全的文件路径: {path}")
-            return False, normalized_path
-
-        return True, normalized_path
+        try:
+            # 使用 Path.resolve() 来获取规范化的绝对路径，处理所有符号链接和相对路径
+            path_obj = Path(path)
+            
+            if not path_obj.is_absolute():
+                # 确定基准目录
+                base_dir = None
+                
+                # 处理 data/ 开头的路径
+                if path.startswith("data/") or path.startswith("data\\"):
+                    base_dir = Path(get_astrbot_data_path())
+                    # 获取相对于 base_dir 的路径部分
+                    relative_path = path[5:].lstrip("/\\")
+                    path_obj = base_dir / relative_path
+                # 处理 AstrBot/ 开头的路径
+                elif path.startswith("AstrBot/") or path.startswith("AstrBot\\"):
+                    base_dir = Path(get_astrbot_root())
+                    # 获取相对于 base_dir 的路径部分
+                    relative_path = path[7:].lstrip("/\\")
+                    if path.startswith("AstrBot\\"):
+                        relative_path = path[8:].lstrip("/\\")
+                    path_obj = base_dir / relative_path
+                # 其他情况使用插件目录作为基准
+                else:
+                    base_dir = Path(self.base_dir)
+                    path_obj = base_dir / path
+            
+            # 解析为绝对路径，处理所有相对部分
+            resolved_path = path_obj.resolve()
+            
+            # 验证路径是否在允许的父目录内
+            allowed_parents = [
+                Path(get_astrbot_data_path()),
+                Path(get_astrbot_root()),
+                Path(self.base_dir)
+            ]
+            
+            is_safe = False
+            for parent in allowed_parents:
+                parent_resolved = parent.resolve()
+                # 检查路径是否以允许的父目录为前缀
+                if str(resolved_path).startswith(str(parent_resolved)):
+                    is_safe = True
+                    break
+            
+            if not is_safe:
+                logger.error(f"路径超出允许范围: {path}")
+                return False, path
+            
+            return True, str(resolved_path)
+        except Exception as e:
+            logger.error(f"路径安全检查失败: {e}")
+            return False, path
 
     @filter.event_message_type(EventMessageType.ALL)
     @filter.platform_adapter_type(PlatformAdapterType.ALL)

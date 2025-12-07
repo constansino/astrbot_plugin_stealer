@@ -14,6 +14,9 @@ from astrbot.api.event import AstrMessageEvent
 class ImageProcessorService:
     """图片处理服务类，负责处理所有与图片相关的操作。"""
 
+    # 有效分类列表作为类常量
+    VALID_CATEGORIES = ["happy", "neutral", "sad", "angry", "shy", "surprised", "smirk", "cry", "confused", "embarrassed", "sigh", "speechless"]
+
     def __init__(self, plugin_instance):
         """初始化图片处理服务。
 
@@ -87,9 +90,6 @@ class ImageProcessorService:
                     "惊讶": ["惊讶", "吃惊", "震惊", "惊诧", "讶异", "意外", "意想不到", "大吃一惊", "目瞪口呆", "瞠目结舌", "震惊", "惊悉", "惊呆了", "惊了", "惊到", "惊", "讶"],
                     "恶心": ["恶心", "厌恶", "反感", "厌烦", "腻烦", "憎恶", "嫌恶", "讨厌", "反感", "恶感", "作呕", "反胃", "倒胃口", "讨厌", "嫌"]
                 }
-                # 保存默认映射表
-                with open(map_path, "w", encoding="utf-8") as f:
-                    json.dump(self.emoji_mapping, f, ensure_ascii=False, indent=4)
         except Exception as e:
             logger.error(f"加载表情映射表失败: {e}")
             # 使用默认映射表
@@ -297,15 +297,14 @@ class ImageProcessorService:
                         category = llm_response_text.strip().lower()
 
                         # 检查分类结果是否在有效类别列表中
-                        valid_categories = ["happy", "neutral", "sad", "angry", "shy", "surprised", "smirk", "cry", "confused", "embarrassed", "sigh", "speechless"]
                         
                         # 尝试直接匹配
-                        if category and category in valid_categories:
+                        if category and category in self.VALID_CATEGORIES:
                             logger.info(f"图片分类结果: {category}")
                             return category
                         
                         # 尝试从响应中提取有效类别（处理LLM可能返回的额外内容）
-                        for valid_cat in valid_categories:
+                        for valid_cat in self.VALID_CATEGORIES:
                             if valid_cat in category:
                                 logger.info(f"从响应中提取分类结果: {valid_cat} (原始响应: {category})")
                                 return valid_cat
@@ -313,7 +312,7 @@ class ImageProcessorService:
                         # 处理可能的格式问题（如引号、括号等）
                         import re
                         cleaned_response = re.sub(r'[^a-zA-Z\s]', '', category)
-                        for valid_cat in valid_categories:
+                        for valid_cat in self.VALID_CATEGORIES:
                             if valid_cat in cleaned_response:
                                 logger.info(f"清理后提取分类结果: {valid_cat} (清理后响应: {cleaned_response})")
                                 return valid_cat

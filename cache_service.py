@@ -20,8 +20,8 @@ class CacheService:
             cache_dir: 缓存文件存储目录，如果为None则使用默认目录
         """
         if not cache_dir:
-            from astrbot.common.tools.star_tools import StarTools
-            cache_dir = Path(StarTools.get_data_dir()) / "stealer" / "cache"
+            from astrbot.core.star.star_tools import StarTools
+            cache_dir = Path(StarTools.get_data_dir()) / "cache"
         
         self._cache_dir = Path(cache_dir)
         try:
