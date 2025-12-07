@@ -254,10 +254,6 @@ class ImageProcessorService:
                 logger.error(f"图片文件不存在: {img_path}")
                 return "无语"
 
-            # 选择视觉模型
-            model = self.plugin.vision_model if hasattr(self.plugin, "vision_model") else "gpt-4o-mini"
-            logger.debug(f"使用视觉模型 {model} 对图片进行分类")
-
             # 构建提示词
             prompt = self.image_classification_prompt
 
@@ -272,6 +268,12 @@ class ImageProcessorService:
                     from astrbot.core.provider.manager import ProviderType
                     provider = self.plugin.context.provider_manager.get_using_provider(ProviderType.CHAT_COMPLETION)
                     chat_provider_id = provider.meta().id
+                    provider_type = provider.meta().type
+                    
+                    # 使用插件配置的视觉模型，如果没有则不指定模型
+                    model = self.plugin.vision_model if hasattr(self.plugin, "vision_model") else None
+                    
+                    logger.debug(f"使用视觉模型 {model} 对图片进行分类")
                     # 使用正确的关键字参数调用llm_generate
                     result = await self.plugin.context.llm_generate(
                         chat_provider_id=chat_provider_id,
@@ -344,10 +346,6 @@ class ImageProcessorService:
             logger.error(f"图片文件不存在: {img_path}")
             return True
 
-        # 选择视觉模型
-        model = self.plugin.vision_model if hasattr(self.plugin, "vision_model") else "gpt-4o-mini"
-        logger.debug(f"使用视觉模型 {model} 对图片进行过滤")
-
         # 调用LLM进行内容过滤
         # 使用插件实例的属性或默认值
         max_retries = getattr(self.plugin, "vision_max_retries", 3)
@@ -359,6 +357,12 @@ class ImageProcessorService:
                 from astrbot.core.provider.manager import ProviderType
                 provider = self.plugin.context.provider_manager.get_using_provider(ProviderType.CHAT_COMPLETION)
                 chat_provider_id = provider.meta().id
+                provider_type = provider.meta().type
+                
+                # 使用插件配置的视觉模型，如果没有则不指定模型
+                model = self.plugin.vision_model if hasattr(self.plugin, "vision_model") else None
+                
+                logger.debug(f"使用视觉模型 {model} 对图片进行过滤")
                 # 使用正确的关键字参数调用llm_generate
                 result = await self.plugin.context.llm_generate(
                     chat_provider_id=chat_provider_id,
