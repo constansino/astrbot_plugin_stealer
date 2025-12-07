@@ -283,10 +283,10 @@ class ImageProcessorService:
             # 确保使用绝对路径
             if not os.path.isabs(img_path):
                 # 如果是相对路径，尝试构建绝对路径
+                # 规范化路径分隔符，确保兼容性（无论self.base_dir是否存在）
+                img_path = img_path.replace("/", os.sep)
+                
                 if self.base_dir:
-                    # 规范化路径分隔符，确保兼容性
-                    img_path = img_path.replace("/", os.sep)
-                    
                     # 优先检查是否是插件数据路径格式
                     if img_path.startswith(f"AstrBot{os.sep}data{os.sep}plugin_data{os.sep}") or img_path.startswith(f"data{os.sep}plugin_data{os.sep}"):
                         # 对于插件数据路径，使用AstrBot根目录构建绝对路径
@@ -312,7 +312,17 @@ class ImageProcessorService:
                     # 如果没有base_dir，尝试使用AstrBot根目录构建绝对路径
                     try:
                         astrbot_root = get_astrbot_root()
-                        img_path = os.path.abspath(os.path.join(astrbot_root, img_path))
+                        
+                        # 检查是否是插件数据路径格式（即使没有base_dir也需要处理）
+                        if img_path.startswith(f"AstrBot{os.sep}data{os.sep}plugin_data{os.sep}") or img_path.startswith(f"data{os.sep}plugin_data{os.sep}"):
+                            # 去掉路径中重复的AstrBot/前缀（如果存在）
+                            if img_path.startswith(f"AstrBot{os.sep}"):
+                                img_path_relative = img_path[len(f"AstrBot{os.sep}"):]
+                            else:
+                                img_path_relative = img_path
+                            img_path = os.path.abspath(os.path.join(astrbot_root, img_path_relative))
+                        else:
+                            img_path = os.path.abspath(os.path.join(astrbot_root, img_path))
                     except Exception as e:
                         logger.error(f"构建图片绝对路径失败: {e}")
                         img_path = os.path.abspath(img_path)
@@ -343,20 +353,22 @@ class ImageProcessorService:
                     # 将本地文件路径转换为file:///格式的URL
                     from pathlib import Path
 
+                    img_url = ""
                     if img_path and not img_path.startswith(("file:///", "base64://")):
-                        # 获取绝对路径
-                        absolute_path = os.path.abspath(img_path)
-
-                        # 在Windows系统上特殊处理
+                        # 确保使用绝对路径构建URL
+                        # 此时img_path已经是绝对路径了，直接使用
+                        absolute_path = img_path
+                        path_obj = Path(absolute_path)
+                        
+                        # 根据操作系统构建正确的file URL
                         if os.name == "nt":
-                            # Windows路径需要转换为UNC格式，使用Path对象确保格式正确
-                            path_obj = Path(absolute_path)
-                            # 将Windows路径转换为适合file URL的格式
+                            # Windows系统需要特殊处理
                             unc_path = f"file:///{path_obj.as_posix()}"
                             img_url = unc_path
                         else:
                             # Unix系统直接使用绝对路径
                             img_url = f"file://{absolute_path}"
+                        logger.debug(f"构建的图片URL: {img_url}")
                     else:
                         img_url = img_path
 
