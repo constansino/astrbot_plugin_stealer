@@ -70,8 +70,8 @@ class ImageProcessorService:
             config_dir = getattr(self.plugin, "config_dir", None)
             if config_dir is None and hasattr(self.plugin, "base_dir"):
                 # 如果没有config_dir，使用base_dir作为替代
-                config_dir = str(self.plugin.base_dir)
-            
+                config_dir = str(self.plugin.base_dir) if self.plugin.base_dir is not None else None
+                
             if config_dir:
                 map_path = os.path.join(config_dir, "emoji_mapping.json")
                 if os.path.exists(map_path):
@@ -257,8 +257,9 @@ class ImageProcessorService:
             prompt = self.image_classification_prompt
 
             # 调用LLM生成分类结果
-            max_retries = int(self.plugin.config.get("vision_max_retries", 3))
-            retry_delay = float(self.plugin.config.get("vision_retry_delay", 1.0))
+            # 使用getattr获取配置，避免直接访问不存在的config属性
+            max_retries = int(getattr(self.plugin, "vision_max_retries", 3))
+            retry_delay = float(getattr(self.plugin, "vision_retry_delay", 1.0))
 
             for attempt in range(max_retries):
                 try:
@@ -466,7 +467,7 @@ class ImageProcessorService:
             config_dir = getattr(self.plugin, "config_dir", None)
             if config_dir is None and hasattr(self.plugin, "base_dir"):
                 # 如果没有config_dir，使用base_dir作为替代
-                config_dir = str(self.plugin.base_dir)
+                config_dir = str(self.plugin.base_dir) if self.plugin.base_dir else None
             
             if not config_dir:
                 return {}
@@ -495,7 +496,7 @@ class ImageProcessorService:
             config_dir = getattr(self.plugin, "config_dir", None)
             if config_dir is None and hasattr(self.plugin, "base_dir"):
                 # 如果没有config_dir，使用base_dir作为替代
-                config_dir = str(self.plugin.base_dir)
+                config_dir = str(self.plugin.base_dir) if self.plugin.base_dir else None
             
             if not config_dir:
                 return False

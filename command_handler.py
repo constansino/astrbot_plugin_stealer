@@ -82,7 +82,7 @@ class CommandHandler:
     async def push(self, event: AstrMessageEvent, category: str = "", alias: str = ""):
         """手动推送指定分类的表情包。"""
         if not self.plugin.base_dir:
-            return
+            return event.plain_result("插件未正确配置，缺少图片存储目录")
         if alias:
             aliases = await self.plugin._load_aliases()
             if alias in aliases:
@@ -91,8 +91,8 @@ class CommandHandler:
                 return event.plain_result("别名不存在")
         cat = category or (self.plugin.categories[0] if self.plugin.categories else "happy")
         cat_dir = self.plugin.base_dir / "categories" / cat
-        if not cat_dir.exists():
-            return event.plain_result("分类不存在")
+        if not cat_dir.exists() or not cat_dir.is_dir():
+            return event.plain_result(f"分类 {cat} 不存在")
         files = [p for p in cat_dir.iterdir() if p.is_file()]
         if not files:
             return event.plain_result("该分类暂无表情包")

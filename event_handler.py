@@ -153,7 +153,8 @@ class EventHandler:
 
         # 目前只取第一个识别到的情绪类别
         category = emotions[0]
-        cat_dir = self.plugin.base_dir / "categories" / category
+        if self.plugin.base_dir:
+                cat_dir = self.plugin.base_dir / "categories" / category
         if not cat_dir.exists():
             logger.debug(f"情绪'{category}'对应的图片目录不存在，未触发图片发送")
             return
@@ -233,7 +234,8 @@ class EventHandler:
             total_deleted = 0
 
             # 清理raw目录
-            raw_dir = self.plugin.base_dir / "raw"
+            if self.plugin.base_dir:
+                raw_dir = self.plugin.base_dir / "raw"
             if raw_dir.exists():
                 logger.debug(f"开始清理raw目录: {raw_dir}, 保留期限: {retention_hours}小时, 当前时间: {current_time}, 截止时间: {cutoff_time}")
 
@@ -301,7 +303,7 @@ class EventHandler:
                     # 从索引中获取分类信息
                     if rp in idx and isinstance(idx[rp], dict):
                         category = idx[rp].get("category", "")
-                        if category:
+                        if category and self.plugin.base_dir:
                             file_name = os.path.basename(rp)
                             category_file_path = os.path.join(self.plugin.base_dir, "categories", category, file_name)
                             if os.path.exists(category_file_path):
