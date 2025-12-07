@@ -97,8 +97,9 @@ class StealerPlugin(Star):
         self.cache_dir: Path = self.base_dir / "cache"
 
         # 初始化人格注入相关属性
-        self.prompt_head: str = ""
-        self.prompt_tail: str = ""
+        # 直接集成提示词，不在设置界面显示
+        self.prompt_head: str = "你需要根据用户的情绪选择不同的回复方式，情绪分类包括：{categories}。"
+        self.prompt_tail: str = "请根据对话内容选择最合适的情绪标签，并在回复内容前添加情绪标签，标签使用&&包裹，例如：&&happy&&你好啊！"
         self.persona_backup: list = []
 
         # 初始化服务类
@@ -197,6 +198,9 @@ class StealerPlugin(Star):
                 self.emotion_analyzer_service.update_config(
                     categories=self.categories
                 )
+
+                # 重新加载人格注入
+                asyncio.create_task(self._reload_personas())
         except Exception as e:
             logger.error(f"更新配置失败: {e}")
 
@@ -311,12 +315,17 @@ class StealerPlugin(Star):
             categories_str = ", ".join(self.categories)
             
             # 生成系统提示添加内容
-            sys_prompt_add = f"\n\n根据对话内容选择一个最匹配的情绪类别：{categories_str}。"
+            # 替换提示词中的占位符
+            head_with_categories = self.prompt_head.replace("{categories}", categories_str)
+            sys_prompt_add = f"\n\n{head_with_categories}\n{self.prompt_tail}"
 
             # 获取当前人格配置并注入
             personas = self.context.provider_manager.personas
             for persona, persona_backup in zip(personas, self.persona_backup):
-                persona["prompt"] = persona_backup["prompt"] + sys_prompt_add
+                # 每次都从备份恢复原始状态，避免人格被多次叠加修改
+                persona["prompt"] = persona_backup["prompt"]
+                # 再添加自定义提示词
+                persona["prompt"] += sys_prompt_add
 
             logger.info("已成功注入情绪选择提醒到人格配置中")
         except Exception as e:
