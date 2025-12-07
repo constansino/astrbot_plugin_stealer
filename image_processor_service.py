@@ -2,11 +2,10 @@ import asyncio
 import base64
 import hashlib
 import os
-import re
 import shutil
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -23,18 +22,18 @@ class ImageProcessorService:
         """
         self.plugin = plugin_instance
         # 确保base_dir始终是字符串
-        if hasattr(plugin_instance, 'base_dir') and plugin_instance.base_dir is not None:
+        if hasattr(plugin_instance, "base_dir") and plugin_instance.base_dir is not None:
             self.base_dir = str(plugin_instance.base_dir)
         else:
             # 如果没有base_dir，尝试从context获取数据目录
             self.base_dir = None
         self.emoji_mapping = {}
-        
+
         # 尝试从插件实例获取提示词配置，如果不存在则使用默认值
-        self.image_classification_prompt = getattr(plugin_instance, 'IMAGE_CLASSIFICATION_PROMPT', 
+        self.image_classification_prompt = getattr(plugin_instance, "IMAGE_CLASSIFICATION_PROMPT",
             """Please classify the image's emotion into a single English label from this exact list: happy, neutral, sad, angry, shy, surprised, smirk, cry, confused, embarrassed, sigh, speechless. Only return the single emotion word, no other text or JSON.""")
-        
-        self.content_filtration_prompt = getattr(plugin_instance, 'CONTENT_FILTRATION_PROMPT', 
+
+        self.content_filtration_prompt = getattr(plugin_instance, "CONTENT_FILTRATION_PROMPT",
             "请判断这张图片是否包含违反规定的内容，仅回复'是'或'否'。如果包含裸露、暴力、敏感或违法内容，回复'是'，否则回复'否'")
         # 配置参数
         self.categories = []
@@ -45,7 +44,7 @@ class ImageProcessorService:
 
     def update_config(self, categories=None, content_filtration=None, filtration_prompt=None, vision_provider_id=None, emoji_only=None):
         """更新图片处理器配置。
-        
+
         Args:
             categories: 分类列表
             content_filtration: 是否进行内容过滤
@@ -72,7 +71,7 @@ class ImageProcessorService:
             if config_dir is None and hasattr(self.plugin, "base_dir"):
                 # 如果没有config_dir，使用base_dir作为替代
                 config_dir = str(self.plugin.base_dir) if self.plugin.base_dir is not None else None
-                
+
             if config_dir:
                 map_path = os.path.join(config_dir, "emoji_mapping.json")
                 if os.path.exists(map_path):
@@ -104,16 +103,16 @@ class ImageProcessorService:
 
     async def process_image(
         self,
-        event: Optional[AstrMessageEvent],
+        event: AstrMessageEvent | None,
         file_path: str,
         is_temp: bool = False,
-        idx: Optional[Dict[str, Any]] = None,
-        categories: Optional[list[str]] = None,
-        emoji_only: Optional[bool] = None,
-        content_filtration: Optional[bool] = None,
-        filtration_prompt: Optional[str] = None,
-        backend_tag: Optional[str] = None
-    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        idx: dict[str, Any] | None = None,
+        categories: list[str] | None = None,
+        emoji_only: bool | None = None,
+        content_filtration: bool | None = None,
+        filtration_prompt: str | None = None,
+        backend_tag: str | None = None
+    ) -> tuple[bool, dict[str, Any] | None]:
         """统一处理图片：存储、分类、过滤。
 
         Args:
@@ -133,7 +132,7 @@ class ImageProcessorService:
         # 使用传入的索引或创建空索引
         if idx is None:
             idx = {}
-            
+
         base_path = Path(file_path)
         if not base_path.exists():
             logger.error(f"图片文件不存在: {file_path}")
@@ -171,12 +170,12 @@ class ImageProcessorService:
         try:
             # 使用传入的过滤参数
             filter_result = await self._filter_image(
-                event, 
-                raw_path, 
-                filtration_prompt=filtration_prompt, 
+                event,
+                raw_path,
+                filtration_prompt=filtration_prompt,
                 content_filtration=content_filtration
             )
-            
+
             if filter_result:
                 # 图片分类
                 category = await self._classify_image(event, raw_path)
@@ -228,18 +227,18 @@ class ImageProcessorService:
         try:
             # 调用原有的分类方法
             emotion = await self._classify_image(event, file_path)
-            
+
             # 返回默认值以匹配main.py的预期
             category = emotion if emotion else "无语"
             tags = []
             desc = ""
-            
+
             return category, tags, desc, emotion
         except Exception as e:
             logger.error(f"图片分类失败: {e}")
             fallback = "无语" if categories and "无语" in categories else "其它"
             return fallback, [], "", fallback
-            
+
     async def _classify_image(self, event: AstrMessageEvent, img_path: str) -> str:
         """使用视觉模型对图片进行分类（内部方法）。
 
@@ -269,8 +268,10 @@ class ImageProcessorService:
 
             for attempt in range(max_retries):
                 try:
-                    # 获取当前使用的聊天提供商ID
-                    chat_provider_id = await self.plugin.context.provider_manager.get_using_provider_id()
+                    # 获取当前使用的聊天提供商实例
+                    from astrbot.core.provider.manager import ProviderType
+                    provider = self.plugin.context.provider_manager.get_using_provider(ProviderType.CHAT_COMPLETION)
+                    chat_provider_id = provider.meta().id
                     # 使用正确的关键字参数调用llm_generate
                     result = await self.plugin.context.llm_generate(
                         chat_provider_id=chat_provider_id,
@@ -281,16 +282,16 @@ class ImageProcessorService:
                     if result:
                         # 获取实际的文本结果
                         llm_response_text = ""
-                        if hasattr(result, 'result_chain') and result.result_chain:
+                        if hasattr(result, "result_chain") and result.result_chain:
                             llm_response_text = result.result_chain.get_plain_text()
-                        elif hasattr(result, 'completion_text') and result.completion_text:
+                        elif hasattr(result, "completion_text") and result.completion_text:
                             llm_response_text = result.completion_text
                         else:
                             llm_response_text = str(result)
-                            
+
                         # 直接处理LLM响应，提示词已要求只返回特定格式结果
                         category = llm_response_text.strip().lower()
-                        
+
                         # 检查分类结果是否在有效类别列表中
                         valid_categories = ["happy", "neutral", "sad", "angry", "shy", "surprised", "smirk", "cry", "confused", "embarrassed", "sigh", "speechless"]
                         if category and category in valid_categories:
@@ -332,10 +333,10 @@ class ImageProcessorService:
         """
         # 使用传入的过滤提示或默认提示
         current_filtration_prompt = filtration_prompt if filtration_prompt else self.content_filtration_prompt
-        
+
         # 确定是否进行内容过滤
         should_filter = content_filtration if content_filtration is not None else getattr(self.plugin, "content_filtration", True)
-        
+
         if not should_filter:
             return True
 
@@ -354,8 +355,10 @@ class ImageProcessorService:
 
         for attempt in range(max_retries):
             try:
-                # 获取当前使用的聊天提供商ID
-                chat_provider_id = await self.plugin.context.provider_manager.get_using_provider_id()
+                # 获取当前使用的聊天提供商实例
+                from astrbot.core.provider.manager import ProviderType
+                provider = self.plugin.context.provider_manager.get_using_provider(ProviderType.CHAT_COMPLETION)
+                chat_provider_id = provider.meta().id
                 # 使用正确的关键字参数调用llm_generate
                 result = await self.plugin.context.llm_generate(
                     chat_provider_id=chat_provider_id,
@@ -363,16 +366,16 @@ class ImageProcessorService:
                     image_urls=[img_path] if img_path else None,
                     model=model
                 )
-                
+
                 # 获取实际的文本结果
                 llm_response_text = ""
-                if hasattr(result, 'result_chain') and result.result_chain:
+                if hasattr(result, "result_chain") and result.result_chain:
                     llm_response_text = result.result_chain.get_plain_text()
-                elif hasattr(result, 'completion_text') and result.completion_text:
+                elif hasattr(result, "completion_text") and result.completion_text:
                     llm_response_text = result.completion_text
                 else:
                     llm_response_text = str(result)
-                
+
                 # 直接处理LLM响应，提示词已要求只返回特定格式结果
                 if llm_response_text.strip() == "是":
                     logger.debug("图片未通过内容过滤")
@@ -462,7 +465,7 @@ class ImageProcessorService:
         except Exception as e:
             logger.error(f"删除文件失败: {e}")
             return False
-            
+
     async def _store_image(self, src_path: str, category: str) -> str:
         """将图片存储到指定分类目录。
 
@@ -477,20 +480,20 @@ class ImageProcessorService:
             if not self.base_dir:
                 logger.error("base_dir未设置，无法存储图片")
                 return src_path
-                
+
             # 确保分类目录存在
             cat_dir = os.path.join(self.base_dir, "categories", category)
             os.makedirs(cat_dir, exist_ok=True)
-            
+
             # 复制图片到分类目录
             filename = os.path.basename(src_path)
             dest_path = os.path.join(cat_dir, filename)
-            
+
             # 如果文件已存在，生成新文件名
             if os.path.exists(dest_path):
                 base_name, ext = os.path.splitext(filename)
                 dest_path = os.path.join(cat_dir, f"{base_name}_{int(time.time())}{ext}")
-                
+
             shutil.copy2(src_path, dest_path)
             logger.debug(f"图片已存储到分类目录: {dest_path}")
             return dest_path
@@ -510,10 +513,10 @@ class ImageProcessorService:
             if config_dir is None and hasattr(self.plugin, "base_dir"):
                 # 如果没有config_dir，使用base_dir作为替代
                 config_dir = str(self.plugin.base_dir) if self.plugin.base_dir else None
-            
+
             if not config_dir:
                 return {}
-                
+
             index_path = os.path.join(config_dir, "index.json")
             if os.path.exists(index_path):
                 import json
@@ -539,10 +542,10 @@ class ImageProcessorService:
             if config_dir is None and hasattr(self.plugin, "base_dir"):
                 # 如果没有config_dir，使用base_dir作为替代
                 config_dir = str(self.plugin.base_dir) if self.plugin.base_dir else None
-            
+
             if not config_dir:
                 return False
-                
+
             index_path = os.path.join(config_dir, "index.json")
             # 确保目录存在
             os.makedirs(os.path.dirname(index_path), exist_ok=True)
