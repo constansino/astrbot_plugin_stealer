@@ -1,57 +1,66 @@
-{
-  "enabled": {
-    "description": "是否开启偷取表情包",
-    "type": "bool"
-  },
-  "auto_send": {
-    "description": "是否自动发送合适的表情包",
-    "type": "bool"
+{  "auto_send": {
+    "description": "是否自动随聊追加表情包",
+    "type": "bool",
+    "default": true
   },
   "vision_provider_id": {
-    "description": "视觉模型 Provider（用于图片分类）",
+    "description": "视觉模型提供商ID（用于图片分类）",
     "type": "string",
     "hint": "选择支持图片输入的提供商 ID（如 Gemini,豆包,qwen vl 等）",
     "_special": "select_provider"
   },
-  "text_provider_id": {
-    "description": "文本模型 Provider（用于文本情绪判断）",
-    "type": "string",
-    "hint": "选择主回复/文本分析的提供商 ID",
-    "_special": "select_provider"
-  },
+
 
   "emoji_chance": {
-    "description": "Planner 触发表情动作的基础概率",
-    "type": "float"
+    "description": "触发表情动作的基础概率",
+    "type": "float",
+    "default": 0.4
   },
   "max_reg_num": {
     "description": "允许注册的最大表情数量",
-    "type": "int"
+    "type": "int",
+    "default": 100
   },
   "do_replace": {
     "description": "达到上限时是否替换旧表情",
-    "type": "bool"
+    "type": "bool",
+    "default": true
   },
-  "check_interval": {
-    "description": "扫描/清理/注册的轮询周期（分钟）",
-    "type": "int"
+  "maintenance_interval": {
+    "description": "后台维护任务的执行周期（分钟），包括容量控制和文件清理",
+    "type": "int",
+    "default": 10
   },
   "steal_emoji": {
-    "description": "允许自动从 data/emoji 注册新表情",
-    "type": "bool"
+    "description": "是否开启表情包偷取和清理功能（关闭后将停止偷取新图片并暂停所有清理操作）",
+    "type": "bool",
+    "default": true
   },
+
   "content_filtration": {
     "description": "是否开启内容审核",
-    "type": "bool"
+    "type": "bool",
+    "default": false
   },
   "filtration_prompt": {
-    "description": "审核准则提示词",
+    "description": "内容审核提示词",
     "type": "string",
     "default": "符合公序良俗"
   },
   "emoji_only": {
     "description": "是否仅偷取聊天表情包（过滤普通图片/截图/长图）",
     "type": "bool",
-    "hint": "建议保持开启：结合多模态判断和尺寸/长宽比过滤，仅保存典型聊天用表情包"
+    "hint": "建议保持开启：结合多模态判断和尺寸/长宽比过滤，仅保存典型聊天用表情包",
+    "default": true
+  },
+  "raw_retention_hours": {
+    "description": "raw目录中图片的保留期限（小时）",
+    "type": "int",
+    "default": 24
+  },
+  "raw_clean_interval": {
+    "description": "raw目录的清理时间间隔（分钟）",
+    "type": "int",
+    "default": 60
   }
 }

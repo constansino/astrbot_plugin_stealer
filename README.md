@@ -31,9 +31,12 @@
 
 
 ## 主要功能
-- 自动监听图片。
-- 使用视觉/文本模型生成图片描述、标签与情绪分类。
-- 在回复发送前追加 base64 图片，与文本同条消息链发出。
+- 自动监听聊天中的图片消息。
+- 使用视觉模型生成图片描述、标签与情绪分类。
+- 支持多种情绪分类，包括开心、悲伤、愤怒、惊讶等。
+- 在回复发送前按合适的概率追加一张匹配情绪的表情。
+- 支持内容审核功能，过滤不符合要求的图片。
+- 自动管理存储空间，定期清理过期文件。
 
 ## 📦 安装方法
 
@@ -46,11 +49,6 @@
 
 ### 1. 模型配置
 
-设置文本模型（用于情绪判断）：
-```bash
-meme set_text <provider_id>
-```
-
 设置视觉模型（用于图片分类）：
 ```bash
 meme set_vision <provider_id>
@@ -59,6 +57,16 @@ meme set_vision <provider_id>
 > **注意**：视觉模型需要支持图片输入（如 Gemini, 豆包, qwen vl 等）
 
 ### 2. 功能开启
+
+开启插件：
+```bash
+meme on
+```
+
+关闭插件：
+```bash
+meme off
+```
 
 开启自动随聊表情：
 ```bash
@@ -83,29 +91,71 @@ meme status
 
 | 配置项 | 类型 | 默认值 | 描述 |
 |--------|------|--------|------|
+| `enabled` | bool | true | 是否启用整个插件功能 |
 | `auto_send` | bool | true | 是否自动随聊追加表情包 |
+| `vision_provider_id` | string | null | 视觉模型提供商ID（用于图片分类） |
 | `emoji_chance` | float | 0.4 | 触发表情动作的基础概率 |
 | `max_reg_num` | int | 100 | 允许注册的最大表情数量 |
 | `do_replace` | bool | true | 达到上限时是否替换旧表情 |
-| `check_interval` | int | 10 | 扫描/清理/注册的轮询周期（分钟） |
-| `steal_emoji` | bool | true | 允许自动从 data/emoji 注册新表情 |
+| `maintenance_interval` | int | 10 | 后台维护任务的执行周期（分钟），包括容量控制和文件清理 |
+| `steal_emoji` | boolean | true | 是否开启聊天图片偷取和清理功能（关闭后将停止偷取新图片并暂停所有清理操作） |
 | `content_filtration` | bool | false | 是否开启内容审核 |
-| `filtration_prompt` | string | "符合公序良俗" | 内容审核提示词 |
+| `filtration_prompt` | string | 符合公序良俗 | 内容审核提示词 |
 | `emoji_only` | bool | true | 是否仅偷取聊天表情包（过滤普通图片/截图/长图） |
-| `vision_provider_id` | string | null | 视觉模型提供商ID |
-| `text_provider_id` | string | null | 文本模型提供商ID |
+| `raw_retention_hours` | int | 24 | raw目录和categories/未分类目录中图片的保留期限（小时） |
+| `raw_clean_interval` | int | 60 | raw目录和categories/未分类目录的清理时间间隔（分钟） |
+
+## 🗑️ 文件清理机制
+
+插件实现了自动的文件清理机制，确保不会占用过多存储空间。清理机制与偷图功能绑定，由以下配置项协同工作：
+
+### 配置项协同原理
+
+1. **核心开关 (`steal_emoji`)**：
+   - 控制偷图和清理功能的总开关
+   - 关闭后将停止偷取新图片并暂停所有清理操作
+
+2. **保留期限 (`raw_retention_hours`)**：
+   - 定义文件在系统中可以保留的最长时间
+   - 默认24小时，超过此时间的文件会被视为"过期文件"
+
+3. **清理时间间隔 (`raw_clean_interval`)**：
+   - 定义清理操作的执行频率
+   - 默认60分钟，每间隔这段时间执行一次清理操作
+
+### 工作流程
+
+1. 当`steal_emoji`开启时，系统每经过`raw_clean_interval`分钟执行一次清理操作
+2. 每次清理时，会检查raw目录和categories/未分类目录中所有文件的修改时间
+3. 删除所有修改时间超过`raw_retention_hours`小时的文件
+
+### 清理范围
+
+- **raw目录**：存放原始图片文件
+- **categories/未分类目录**：存放尚未分类完成的图片文件
+- **已分类的图片**：通过容量控制机制(`max_reg_num`和`do_replace`)进行管理
+
+### 示例（默认配置）
+
+- 系统每60分钟执行一次清理操作
+- 每次清理时，删除所有超过24小时的文件
+- 这样确保了文件不会无限期保留，同时避免了过于频繁的清理操作影响性能
+
 
 ## 📝 使用指令
 
 | 指令 | 描述 |
 |------|------|
-| `meme set_text <provider_id>` | 设置文本模型 |
+| `meme on` | 开启偷表情包功能 |
+| `meme off` | 关闭偷表情包功能 |
 | `meme set_vision <provider_id>` | 设置视觉模型 |
 | `meme show_providers` | 查看当前模型配置 |
 | `meme auto_on` | 开启自动随聊表情 |
 | `meme auto_off` | 关闭自动随聊表情 |
 | `meme status` | 查看当前插件状态 |
 | `meme emoji_only <on/off>` | 切换仅偷取表情包模式 |
+| `meme push <category> [alias]` | 推送指定分类的表情包（管理员指令） |
+| `meme debug_image` | 调试图片处理（管理员指令） |
 
 ## ⚠️ 注意事项
 

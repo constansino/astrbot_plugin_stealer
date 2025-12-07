@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "auto_send": true,
+  "vision_provider_id": null,
+  "emoji_chance": 0.4,
+  "max_reg_num": 100,
+  "do_replace": true,
+  "maintenance_interval": 10,
+  "content_filtration": false,
+  "filtration_prompt": "符合公序良俗",
+  "emoji_only": true,
+  "raw_retention_hours": 24,
+  "raw_clean_interval": 60,
+  "categories": [
+    "happy",
+    "neutral",
+    "sad",
+    "angry",
+    "shy",
+    "surprised",
+    "smirk",
+    "cry",
+    "confused",
+    "embarrassed",
+    "sigh",
+    "speechless"
+  ]
+}
