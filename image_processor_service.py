@@ -31,7 +31,21 @@ class ImageProcessorService:
 
         # 尝试从插件实例获取提示词配置，如果不存在则使用默认值
         self.image_classification_prompt = getattr(plugin_instance, "IMAGE_CLASSIFICATION_PROMPT",
-            """Please classify the image's emotion into a single English label from this exact list: happy, neutral, sad, angry, shy, surprised, smirk, cry, confused, embarrassed, sigh, speechless. Only return the single emotion word, no other text or JSON.""")
+            """Please carefully analyze the emotion expressed in the image and classify it into one of the following exact English labels:
+- happy: Feeling or showing pleasure or contentment
+- neutral: Showing no strong emotion; calm
+- sad: Feeling or showing sorrow; unhappy
+- angry: Feeling or showing strong annoyance, displeasure, or hostility
+- shy: Nervous or timid in the company of other people
+- surprised: Feeling or showing mild astonishment or shock
+- smirk: A half-smile expressing amusement or disdain
+- cry: Shedding tears, typically from emotion
+- confused: Unable to think clearly; bewildered
+- embarrassed: Feeling self-conscious, ashamed, or awkward
+- sigh: Expressing relief, tiredness, or disappointment with a deep breath
+- speechless: Unable to speak, typically as a result of shock or strong emotion
+
+Only return the single emotion word from the list above. Do NOT include any other text, punctuation, or explanation.""")
 
         self.content_filtration_prompt = getattr(plugin_instance, "CONTENT_FILTRATION_PROMPT",
             "请判断这张图片是否包含违反规定的内容，仅回复'是'或'否'。如果包含裸露、暴力、敏感或违法内容，回复'是'，否则回复'否'")
