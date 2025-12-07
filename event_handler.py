@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import time
+from typing import Optional, List
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -42,16 +43,19 @@ class EventHandler:
             return
 
         # 收集所有图片组件
-        imgs = [comp for comp in message_event.message_obj.message if isinstance(comp, Image)]
+        imgs: List[Image] = [comp for comp in message_event.message_obj.message if isinstance(comp, Image)]
 
         for img in imgs:
             try:
                 # 转换图片到临时文件路径
-                temp_path = await img.convert_to_file_path()
+                temp_path: str = await img.convert_to_file_path()
 
                 # 检查路径安全性
+                is_safe: bool
+                safe_path: str
                 is_safe, safe_path = plugin_instance._is_safe_path(temp_path)
                 if not is_safe:
+                    logger.warning(f"不安全的图片路径: {temp_path}")
                     continue
 
                 temp_path = safe_path
@@ -62,11 +66,21 @@ class EventHandler:
                     continue
 
                 # 使用统一的图片处理方法
+                success: bool
+                idx: Optional[dict]
                 success, idx = await plugin_instance._process_image(message_event, temp_path, is_temp=True)
                 if success and idx:
                     await plugin_instance._save_index(idx)
+            except FileNotFoundError as e:
+                logger.error(f"图片文件不存在: {e}")
+            except PermissionError as e:
+                logger.error(f"图片文件权限错误: {e}")
+            except asyncio.TimeoutError as e:
+                logger.error(f"图片处理超时: {e}")
+            except ValueError as e:
+                logger.error(f"图片处理参数错误: {e}")
             except Exception as e:
-                logger.error(f"处理图片失败: {e}")
+                logger.error(f"处理图片失败: {e}", exc_info=True)
 
     @on_decorating_result()
     async def before_send(self, event: AstrMessageEvent, *args, **kwargs):
@@ -78,9 +92,14 @@ class EventHandler:
         if result is None:
             return
 
+        # 检查result是否具有必要的属性
+        if not hasattr(result, "chain") or not hasattr(result, "get_plain_text"):
+            logger.error("before_send: 结果对象缺少必要属性，无法处理")
+            return
+
         # 文本仅用于本地规则提取情绪关键字，不再请求额外的 LLM
-        text = result.get_plain_text() or event.get_message_str()
-        if not text or not text.strip():
+        text: str = result.get_plain_text() or event.get_message_str() or ""
+        if not text.strip():
             logger.debug("没有可处理的文本内容，未触发图片发送")
             return
 
@@ -124,8 +143,8 @@ class EventHandler:
             if random.random() >= chance:
                 logger.debug(f"表情包自动发送概率检查未通过 ({chance}), 未触发图片发送")
                 return
-        except Exception:
-            logger.error("解析表情包自动发送概率配置失败，未触发图片发送")
+        except (ValueError, TypeError) as e:
+            logger.error(f"解析表情包自动发送概率配置失败: {e}，未触发图片发送")
             return
 
         logger.debug("表情包自动发送概率检查通过，开始处理图片发送")
@@ -139,20 +158,24 @@ class EventHandler:
             logger.debug(f"情绪'{category}'对应的图片目录不存在，未触发图片发送")
             return
 
-        files = [p for p in cat_dir.iterdir() if p.is_file()]
-        if not files:
-            logger.debug(f"情绪'{category}'对应的图片目录为空，未触发图片发送")
-            return
+        try:
+            files = [p for p in cat_dir.iterdir() if p.is_file()]
+            if not files:
+                logger.debug(f"情绪'{category}'对应的图片目录为空，未触发图片发送")
+                return
 
-        logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片")
-        pick = random.choice(files)
-        idx = await self.plugin._load_index()
-        rec = idx.get(pick.as_posix())
-        if isinstance(rec, dict):
-            rec["usage_count"] = int(rec.get("usage_count", 0)) + 1
-            rec["last_used"] = int(asyncio.get_event_loop().time())
-            idx[pick.as_posix()] = rec
-            await self.plugin._save_index(idx)
+            logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片")
+            pick = random.choice(files)
+            idx = await self.plugin._load_index()
+            rec = idx.get(pick.as_posix())
+            if isinstance(rec, dict):
+                rec["usage_count"] = int(rec.get("usage_count", 0)) + 1
+                rec["last_used"] = int(asyncio.get_event_loop().time())
+                idx[pick.as_posix()] = rec
+                await self.plugin._save_index(idx)
+        except (FileNotFoundError, PermissionError) as e:
+            logger.error(f"访问情绪图片目录失败: {e}", exc_info=True)
+            return
         # 创建新的结果对象并更新内容
         new_result = event.make_result().set_result_content_type(result.result_content_type)
 

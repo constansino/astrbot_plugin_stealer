@@ -3,7 +3,9 @@ import copy
 import json
 import os
 import random
+import shutil
 from pathlib import Path
+from typing import Optional, Dict, Any, Tuple, List
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
@@ -55,7 +57,7 @@ class StealerPlugin(Star):
 只返回表情标签，不要添加任何其他内容。文本: {text}"""
 
     # 从外部文件加载的提示词
-    EMOTION_DETECTION_PROMPT = ""
+    IMAGE_CLASSIFICATION_PROMPT = ""
 
     # 缓存相关常量和方法已迁移到CacheService类
 
@@ -232,8 +234,12 @@ class StealerPlugin(Star):
                 if prompts_path.exists():
                     with open(prompts_path, encoding="utf-8") as f:
                         prompts = json.load(f)
-                        self.EMOTION_DETECTION_PROMPT = prompts.get("EMOTION_DETECTION_PROMPT", self.EMOTION_DETECTION_PROMPT)
+                        self.IMAGE_CLASSIFICATION_PROMPT = prompts.get("IMAGE_CLASSIFICATION_PROMPT", self.IMAGE_CLASSIFICATION_PROMPT)
                         logger.info(f"已加载提示词文件: {prompts_path}")
+                        
+                        # 更新ImageProcessorService的提示词
+                        if hasattr(self, 'image_processor_service') and hasattr(self.image_processor_service, 'image_classification_prompt'):
+                            self.image_processor_service.image_classification_prompt = self.IMAGE_CLASSIFICATION_PROMPT
                 else:
                     logger.warning(f"提示词文件不存在: {prompts_path}")
             except Exception as e:
@@ -275,8 +281,16 @@ class StealerPlugin(Star):
             self.task_scheduler.cancel_task("scanner_loop")
 
             # 恢复原始人格
-            if hasattr(self.context, 'provider_manager') and hasattr(self.context.provider_manager, 'personas') and self.persona_backup:
-                self.context.provider_manager.personas = self.persona_backup
+            if hasattr(self.context, 'persona_manager') and self.persona_backup:
+                # 遍历备份的人格ID和原始系统提示，逐个更新人格配置
+                for persona_id, original_prompt in self.persona_backup.items():
+                    try:
+                        await self.context.persona_manager.update_persona(
+                            persona_id=persona_id,
+                            system_prompt=original_prompt
+                        )
+                    except Exception as e:
+                        logger.error(f"恢复人格 {persona_id} 失败: {e}")
 
             # 清理各服务资源
             self.cache_service.cleanup()
@@ -367,45 +381,61 @@ class StealerPlugin(Star):
 
 
 
-    async def _load_index(self) -> dict:
+    async def _load_index(self) -> Dict[str, Any]:
         """加载分类索引文件。
 
         Returns:
-            dict: 键为文件路径，值为包含 category 与 tags 的字典。
+            Dict[str, Any]: 键为文件路径，值为包含 category 与 tags 的字典。
         """
         try:
             # 使用缓存服务加载索引
             return self.cache_service.get_cache("index_cache") or {}
+        except IOError as e:
+            logger.error(f"索引文件IO错误: {e}")
+            return {}
+        except json.JSONDecodeError as e:
+            logger.error(f"索引文件格式错误: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"加载索引失败: {e}")
+            logger.error(f"加载索引失败: {e}", exc_info=True)
             return {}
 
-    async def _save_index(self, idx: dict):
+    async def _save_index(self, idx: Dict[str, Any]):
         """保存分类索引文件。"""
         try:
             # 使用缓存服务保存索引
             self.cache_service.set_cache("index_cache", idx)
+        except IOError as e:
+            logger.error(f"索引文件IO错误: {e}")
         except Exception as e:
-            logger.error(f"保存索引文件失败: {e}")
+            logger.error(f"保存索引文件失败: {e}", exc_info=True)
 
-    async def _load_aliases(self) -> dict:
+    async def _load_aliases(self) -> Dict[str, str]:
         """加载分类别名文件。
 
         Returns:
-            dict: 别名映射字典。
+            Dict[str, str]: 别名映射字典。
         """
         try:
             return self.config_service.get_aliases()
+        except IOError as e:
+            logger.error(f"别名文件IO错误: {e}")
+            return {}
+        except json.JSONDecodeError as e:
+            logger.error(f"别名文件格式错误: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"加载别名失败: {e}")
+            logger.error(f"加载别名失败: {e}", exc_info=True)
             return {}
 
-    async def _save_aliases(self, aliases: dict):
+    async def _save_aliases(self, aliases: Dict[str, str]):
         """保存分类别名文件。"""
         try:
             self.config_service.update_aliases(aliases)
+        except IOError as e:
+            logger.error(f"别名文件IO错误: {e}")
         except Exception as e:
-            logger.error(f"保存别名文件失败: {e}")
+            logger.error(f"保存别名文件失败: {e}", exc_info=True)
 
 
 
@@ -421,7 +451,7 @@ class StealerPlugin(Star):
         """
         return self.image_processor_service._is_likely_emoji_by_metadata(file_path)
 
-    async def _classify_image(self, event: AstrMessageEvent | None, file_path: str) -> tuple[str, list[str], str, str]:
+    async def _classify_image(self, event: Optional[AstrMessageEvent], file_path: str) -> Tuple[str, List[str], str, str]:
         """调用多模态模型对图片进行情绪分类与标签抽取。
 
         Args:
@@ -429,7 +459,7 @@ class StealerPlugin(Star):
             file_path: 本地图片路径。
 
         Returns:
-            (category, tags, desc, emotion): 类别、标签、详细描述、情感标签。
+            Tuple[str, List[str], str, str]: 类别、标签、详细描述、情感标签。
         """
         try:
             # 委托给ImageProcessorService类处理
@@ -440,6 +470,18 @@ class StealerPlugin(Star):
                 categories=self.categories
             )
             return result
+        except FileNotFoundError as e:
+            logger.error(f"图片文件不存在: {e}", exc_info=True)
+            fallback = "无语" if "无语" in self.categories else "其它"
+            return fallback, [], "", fallback
+        except PermissionError as e:
+            logger.error(f"图片文件权限错误: {e}", exc_info=True)
+            fallback = "无语" if "无语" in self.categories else "其它"
+            return fallback, [], "", fallback
+        except (ValueError, TypeError) as e:
+            logger.error(f"图片分类参数错误: {e}", exc_info=True)
+            fallback = "无语" if "无语" in self.categories else "其它"
+            return fallback, [], "", fallback
         except Exception as e:
             logger.error(f"图片分类失败: {e}", exc_info=True)
             fallback = "无语" if "无语" in self.categories else "其它"
@@ -486,7 +528,7 @@ class StealerPlugin(Star):
             logger.error(f"删除文件失败: {e}")
             return False
 
-    async def _process_image(self, event: AstrMessageEvent | None, file_path: str, is_temp: bool = False, idx: dict | None = None) -> tuple[bool, dict | None]:
+    async def _process_image(self, event: Optional[AstrMessageEvent], file_path: str, is_temp: bool = False, idx: Optional[Dict[str, Any]] = None) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """统一处理图片的方法，包括过滤、分类、存储和索引更新
 
         Args:
@@ -499,6 +541,13 @@ class StealerPlugin(Star):
             (成功与否, 更新后的索引字典)
         """
         try:
+            # 检查文件是否存在
+            if not os.path.exists(file_path):
+                logger.error(f"图片文件不存在: {file_path}")
+                if is_temp:
+                    await self._safe_remove_file(file_path)  # 清理临时文件
+                return False, idx
+            
             # 委托给ImageProcessorService类处理
             success, updated_idx = await self.image_processor_service.process_image(
                 event=event,
@@ -521,11 +570,19 @@ class StealerPlugin(Star):
                 return success, full_idx
 
             return success, updated_idx
+        except FileNotFoundError as e:
+            logger.error(f"文件不存在错误: {e}")
+        except PermissionError as e:
+            logger.error(f"权限错误: {e}")
+        except shutil.Error as e:
+            logger.error(f"文件操作错误: {e}")
         except Exception as e:
-            logger.error(f"处理图片失败: {e}")
-            if is_temp:
-                await self._safe_remove_file(file_path)
-            return False, idx
+            logger.error(f"处理图片失败: {e}", exc_info=True)  # 记录完整堆栈信息
+        
+        # 异常情况下的清理和返回
+        if is_temp:
+            await self._safe_remove_file(file_path)
+        return False, idx
 
     def _is_in_parentheses(self, text: str, index: int) -> bool:
         """判断字符串中指定索引位置是否在括号内。
@@ -547,33 +604,49 @@ class StealerPlugin(Star):
 
         return parentheses_count > 0 or bracket_count > 0
 
-    async def _classify_text_category(self, event: AstrMessageEvent, text: str) -> str:
+    async def _classify_text_category(self, event: Optional[AstrMessageEvent], text: str) -> str:
         """调用文本模型判断文本情绪并映射到插件分类。"""
         try:
             # 委托给EmotionAnalyzerService类进行文本情绪分类
             result = await self.emotion_analyzer_service.classify_text_emotion(event, text)
             return result
+        except ValueError as e:
+            logger.error(f"文本分类参数错误: {e}")
+            return ""
+        except TypeError as e:
+            logger.error(f"文本分类类型错误: {e}")
+            return ""
         except Exception as e:
-            logger.error(f"文本情绪分类失败: {e}")
+            logger.error(f"文本情绪分类失败: {e}", exc_info=True)
             return ""
 
-    async def _extract_emotions_from_text(self, event: AstrMessageEvent | None, text: str) -> tuple[list[str], str]:
+    async def _extract_emotions_from_text(self, event: Optional[AstrMessageEvent], text: str) -> Tuple[List[str], str]:
         """从文本中提取情绪关键词，本地提取不到时使用 LLM。
 
         委托给 EmotionAnalyzerService 类处理
         """
         try:
             return await self.emotion_analyzer_service.extract_emotions_from_text(event, text)
+        except ValueError as e:
+            logger.error(f"情绪提取参数错误: {e}")
+            return [], text
+        except TypeError as e:
+            logger.error(f"情绪提取类型错误: {e}")
+            return [], text
         except Exception as e:
-            logger.error(f"提取文本情绪失败: {e}")
+            logger.error(f"提取文本情绪失败: {e}", exc_info=True)
             return [], text
 
-    async def _pick_vision_provider(self, event: AstrMessageEvent | None) -> str | None:
+    async def _pick_vision_provider(self, event: Optional[AstrMessageEvent]) -> Optional[str]:
         if self.vision_provider_id:
             return self.vision_provider_id
         if event is None:
             return None
-        return await self.context.get_current_chat_provider_id(event.unified_msg_origin)
+        try:
+            return await self.context.get_current_chat_provider_id(event.unified_msg_origin)
+        except Exception as e:
+            logger.error(f"获取视觉模型提供者失败: {e}")
+            return None
 
 
 

@@ -5,6 +5,7 @@ import os
 import shutil
 import time
 from pathlib import Path
+from typing import Optional, Dict, Any, Tuple
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -20,10 +21,42 @@ class ImageProcessorService:
             plugin_instance: StealerPlugin 实例，用于访问插件的配置和服务
         """
         self.plugin = plugin_instance
-        self.base_dir = None
+        self.base_dir = str(plugin_instance.base_dir) if hasattr(plugin_instance, 'base_dir') else None
         self.emoji_mapping = {}
-        self.image_classification_prompt = "请分析这张图片的情感倾向，无需解释，只返回一个中文情绪词，例如：开心、难过、愤怒、惊讶、恶心、害怕、平静、期待、信任、厌恶、快乐、悲伤、恐惧、惊喜等"
-        self.content_filtration_prompt = "请判断这张图片是否包含违反规定的内容，仅回复'是'或'否'。如果包含裸露、暴力、敏感或违法内容，回复'是'，否则回复'否'"
+        
+        # 尝试从插件实例获取提示词配置，如果不存在则使用默认值
+        self.image_classification_prompt = getattr(plugin_instance, 'IMAGE_CLASSIFICATION_PROMPT', 
+            """Please classify the image's emotion into a single English label from this exact list: happy, neutral, sad, angry, shy, surprised, smirk, cry, confused, embarrassed, sigh, speechless. Only return the single emotion word, no other text or JSON.""")
+        
+        self.content_filtration_prompt = getattr(plugin_instance, 'CONTENT_FILTRATION_PROMPT', 
+            "请判断这张图片是否包含违反规定的内容，仅回复'是'或'否'。如果包含裸露、暴力、敏感或违法内容，回复'是'，否则回复'否'")
+        # 配置参数
+        self.categories = []
+        self.content_filtration = False
+        self.filtration_prompt = ""
+        self.vision_provider_id = ""
+        self.emoji_only = False
+
+    def update_config(self, categories=None, content_filtration=None, filtration_prompt=None, vision_provider_id=None, emoji_only=None):
+        """更新图片处理器配置。
+        
+        Args:
+            categories: 分类列表
+            content_filtration: 是否进行内容过滤
+            filtration_prompt: 内容过滤提示
+            vision_provider_id: 视觉模型提供者ID
+            emoji_only: 是否只处理表情
+        """
+        if categories is not None:
+            self.categories = categories
+        if content_filtration is not None:
+            self.content_filtration = content_filtration
+        if filtration_prompt is not None:
+            self.filtration_prompt = filtration_prompt
+        if vision_provider_id is not None:
+            self.vision_provider_id = vision_provider_id
+        if emoji_only is not None:
+            self.emoji_only = emoji_only
 
     async def load_emoji_mapping(self):
         """加载表情关键字映射表。"""
@@ -56,26 +89,46 @@ class ImageProcessorService:
                 "恶心": ["恶心", "厌恶", "反感", "厌烦", "腻烦", "憎恶", "嫌恶", "讨厌", "反感", "恶感", "作呕", "反胃", "倒胃口", "讨厌", "嫌"]
             }
 
-    async def _process_image(self, event: AstrMessageEvent, img_path: str, is_temp=False) -> tuple[bool, dict]:
+    async def process_image(
+        self,
+        event: Optional[AstrMessageEvent],
+        file_path: str,
+        is_temp: bool = False,
+        idx: Optional[Dict[str, Any]] = None,
+        categories: Optional[list[str]] = None,
+        emoji_only: Optional[bool] = None,
+        content_filtration: Optional[bool] = None,
+        filtration_prompt: Optional[str] = None,
+        backend_tag: Optional[str] = None
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """统一处理图片：存储、分类、过滤。
 
         Args:
             event: 消息事件
-            img_path: 图片路径
+            file_path: 图片路径
             is_temp: 是否为临时文件
+            idx: 索引字典
+            categories: 分类列表
+            emoji_only: 是否只处理表情
+            content_filtration: 是否进行内容过滤
+            filtration_prompt: 内容过滤提示
+            backend_tag: 后端标签
 
         Returns:
             tuple: (是否成功, 图片索引)
         """
-        idx = await self.plugin._load_index()
-        base_path = Path(img_path)
+        # 使用传入的索引或创建空索引
+        if idx is None:
+            idx = {}
+            
+        base_path = Path(file_path)
         if not base_path.exists():
-            logger.error(f"图片文件不存在: {img_path}")
+            logger.error(f"图片文件不存在: {file_path}")
             return False, None
 
         # 计算图片哈希作为唯一标识符
         hasher = hashlib.md5()
-        with open(img_path, "rb") as f:
+        with open(file_path, "rb") as f:
             hasher.update(f.read())
         hash_val = hasher.hexdigest()
 
@@ -83,8 +136,8 @@ class ImageProcessorService:
         for k, v in idx.items():
             if isinstance(v, dict) and v.get("hash") == hash_val:
                 logger.debug(f"图片已存在: {hash_val}")
-                if is_temp and os.path.exists(img_path):
-                    await self._safe_remove_file(img_path)
+                if is_temp and os.path.exists(file_path):
+                    await self._safe_remove_file(file_path)
                 return False, None
 
         # 存储图片到raw目录
@@ -95,15 +148,23 @@ class ImageProcessorService:
             filename = f"{int(time.time())}_{hash_val[:8]}{ext}"
             raw_path = os.path.join(raw_dir, filename)
             if is_temp:
-                shutil.move(img_path, raw_path)
+                shutil.move(file_path, raw_path)
             else:
-                shutil.copy2(img_path, raw_path)
+                shutil.copy2(file_path, raw_path)
         else:
-            raw_path = img_path
+            raw_path = file_path
 
         # 过滤图片
         try:
-            if await self._filter_image(event, raw_path):
+            # 使用传入的过滤参数
+            filter_result = await self._filter_image(
+                event, 
+                raw_path, 
+                filtration_prompt=filtration_prompt, 
+                content_filtration=content_filtration
+            )
+            
+            if filter_result:
                 # 图片分类
                 category = await self._classify_image(event, raw_path)
                 logger.debug(f"图片分类结果: {category}")
@@ -133,8 +194,35 @@ class ImageProcessorService:
             await self._safe_remove_file(raw_path)
             return False, None
 
-    async def _classify_image(self, event: AstrMessageEvent, img_path: str) -> str:
+    async def classify_image(self, event: AstrMessageEvent, file_path: str, emoji_only=None, categories=None) -> tuple[str, list[str], str, str]:
         """使用视觉模型对图片进行分类。
+
+        Args:
+            event: 消息事件
+            file_path: 图片路径
+            emoji_only: 是否只处理表情
+            categories: 分类列表
+
+        Returns:
+            tuple: (category, tags, desc, emotion)
+        """
+        try:
+            # 调用原有的分类方法
+            emotion = await self._classify_image(event, file_path)
+            
+            # 返回默认值以匹配main.py的预期
+            category = emotion if emotion else "无语"
+            tags = []
+            desc = ""
+            
+            return category, tags, desc, emotion
+        except Exception as e:
+            logger.error(f"图片分类失败: {e}")
+            fallback = "无语" if categories and "无语" in categories else "其它"
+            return fallback, [], "", fallback
+            
+    async def _classify_image(self, event: AstrMessageEvent, img_path: str) -> str:
+        """使用视觉模型对图片进行分类（内部方法）。
 
         Args:
             event: 消息事件
@@ -146,7 +234,7 @@ class ImageProcessorService:
         try:
             if not os.path.exists(img_path):
                 logger.error(f"图片文件不存在: {img_path}")
-                return None
+                return "无语"
 
             # 选择视觉模型
             model = self.plugin.vision_model if hasattr(self.plugin, "vision_model") else "gpt-4o-mini"
@@ -163,13 +251,17 @@ class ImageProcessorService:
                 try:
                     result = await self.plugin.context.llm_generate(event, prompt, image_path=img_path, model=model)
                     if result:
-                        # 清理结果，只保留情绪词
-                        category = result.strip().replace('"', "").replace("'", "")
-                        # 检查分类结果是否在有效情绪列表中
-                        valid_emotions = ["开心", "难过", "愤怒", "惊讶", "恶心", "害怕", "平静", "期待", "信任", "厌恶", "快乐", "悲伤", "恐惧", "惊喜"]
-                        if category in valid_emotions:
-                            return category
-                        logger.debug(f"无效的分类结果: {category}")
+                            # 处理直接返回的情绪标签
+                            category = result.strip().lower()
+                            
+                            # 检查分类结果是否在有效类别列表中
+                            valid_categories = ["happy", "neutral", "sad", "angry", "shy", "surprised", "smirk", "cry", "confused", "embarrassed", "sigh", "speechless"]
+                            if category and category in valid_categories:
+                                logger.info(f"图片分类结果: {category}")
+                                return category
+                            else:
+                                logger.warning(f"分类结果不在有效类别列表中: {category}")
+                            logger.debug(f"无效的分类结果: {result}")
                 except Exception as e:
                     error_msg = str(e)
                     # 检查是否为限流错误
@@ -189,57 +281,61 @@ class ImageProcessorService:
             logger.error(f"图片分类失败: {e}")
             return None
 
-    async def _filter_image(self, event: AstrMessageEvent, img_path: str) -> bool:
+    async def _filter_image(self, event: AstrMessageEvent, img_path: str, filtration_prompt=None, content_filtration=None) -> bool:
         """使用LLM过滤图片内容。
 
         Args:
             event: 消息事件
             img_path: 图片路径
+            filtration_prompt: 内容过滤提示（可选）
+            content_filtration: 是否进行内容过滤（可选）
 
         Returns:
             bool: 是否通过过滤
         """
-        try:
-            if not self.plugin.config.get("content_filtration", True):
+        # 使用传入的过滤提示或默认提示
+        current_filtration_prompt = filtration_prompt if filtration_prompt else self.content_filtration_prompt
+        
+        # 确定是否进行内容过滤
+        should_filter = content_filtration if content_filtration is not None else self.plugin.config.get("content_filtration", True)
+        
+        if not should_filter:
+            return True
+
+        if not os.path.exists(img_path):
+            logger.error(f"图片文件不存在: {img_path}")
+            return True
+
+        # 选择视觉模型
+        model = self.plugin.vision_model if hasattr(self.plugin, "vision_model") else "gpt-4o-mini"
+        logger.debug(f"使用视觉模型 {model} 对图片进行过滤")
+
+        # 调用LLM进行内容过滤
+        max_retries = int(self.plugin.config.get("vision_max_retries", 3))
+        retry_delay = float(self.plugin.config.get("vision_retry_delay", 1.0))
+
+        for attempt in range(max_retries):
+            try:
+                result = await self.plugin.context.llm_generate(event, current_filtration_prompt, image_path=img_path, model=model)
+                if result and result.strip() == "是":
+                    logger.debug("图片未通过内容过滤")
+                    return False
                 return True
-
-            if not os.path.exists(img_path):
-                logger.error(f"图片文件不存在: {img_path}")
-                return True
-
-            # 构建提示词
-            prompt = self.content_filtration_prompt
-            model = self.plugin.vision_model if hasattr(self.plugin, "vision_model") else "gpt-4o-mini"
-
-            # 调用LLM进行内容过滤
-            max_retries = int(self.plugin.config.get("vision_max_retries", 3))
-            retry_delay = float(self.plugin.config.get("vision_retry_delay", 1.0))
-
-            for attempt in range(max_retries):
-                try:
-                    result = await self.plugin.context.llm_generate(event, prompt, image_path=img_path, model=model)
-                    if result and result.strip() == "是":
-                        logger.debug("图片未通过内容过滤")
-                        return False
-                    return True
-                except Exception as e:
-                    error_msg = str(e)
-                    # 检查是否为限流错误
-                    is_rate_limit = "429" in error_msg or "RateLimit" in error_msg or "exceeded your current request limit" in error_msg
-                    if is_rate_limit:
-                        logger.warning(f"图片过滤请求被限流，正在重试 ({attempt+1}/{max_retries})")
+            except Exception as e:
+                error_msg = str(e)
+                # 检查是否为限流错误
+                is_rate_limit = "429" in error_msg or "RateLimit" in error_msg or "exceeded your current request limit" in error_msg
+                if is_rate_limit:
+                    logger.warning(f"图片过滤请求被限流，正在重试 ({attempt+1}/{max_retries})")
+                    await asyncio.sleep(retry_delay * (2 ** attempt))
+                else:
+                    logger.error(f"图片过滤失败 (尝试 {attempt+1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
                         await asyncio.sleep(retry_delay * (2 ** attempt))
                     else:
-                        logger.error(f"图片过滤失败 (尝试 {attempt+1}/{max_retries}): {e}")
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(retry_delay * (2 ** attempt))
-                        else:
-                            break
-            logger.error("图片过滤失败，达到最大重试次数，默认允许通过")
-            return True
-        except Exception as e:
-            logger.error(f"图片过滤失败: {e}")
-            return True
+                        break
+        logger.error("图片过滤失败，达到最大重试次数，默认允许通过")
+        return True
 
     async def _extract_emotions_from_text(self, event: AstrMessageEvent, text: str) -> tuple[list, str]:
         """从文本中提取情绪关键词。
@@ -309,6 +405,41 @@ class ImageProcessorService:
         except Exception as e:
             logger.error(f"删除文件失败: {e}")
             return False
+            
+    async def _store_image(self, src_path: str, category: str) -> str:
+        """将图片存储到指定分类目录。
+
+        Args:
+            src_path: 源图片路径
+            category: 分类名称
+
+        Returns:
+            str: 存储后的图片路径
+        """
+        try:
+            if not self.base_dir:
+                logger.error("base_dir未设置，无法存储图片")
+                return src_path
+                
+            # 确保分类目录存在
+            cat_dir = os.path.join(self.base_dir, "categories", category)
+            os.makedirs(cat_dir, exist_ok=True)
+            
+            # 复制图片到分类目录
+            filename = os.path.basename(src_path)
+            dest_path = os.path.join(cat_dir, filename)
+            
+            # 如果文件已存在，生成新文件名
+            if os.path.exists(dest_path):
+                base_name, ext = os.path.splitext(filename)
+                dest_path = os.path.join(cat_dir, f"{base_name}_{int(time.time())}{ext}")
+                
+            shutil.copy2(src_path, dest_path)
+            logger.debug(f"图片已存储到分类目录: {dest_path}")
+            return dest_path
+        except Exception as e:
+            logger.error(f"存储图片失败: {e}")
+            return src_path
 
     async def _load_index(self) -> dict:
         """加载图片索引。
