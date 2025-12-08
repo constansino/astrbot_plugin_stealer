@@ -96,6 +96,9 @@ class StealerPlugin(Star):
         self.categories_dir: Path = self.base_dir / "categories"
         self.cache_dir: Path = self.base_dir / "cache"
 
+        # 设置PILImage实例属性，供ImageProcessorService使用
+        self.PILImage = PILImage
+
         # 初始化人格注入相关属性
         # 直接集成提示词，不在设置界面显示
         self.prompt_head: str = (
