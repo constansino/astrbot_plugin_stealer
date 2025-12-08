@@ -6,7 +6,6 @@ import re
 import shutil
 import time
 from pathlib import Path
-from astrbot.core.utils.astrbot_path import get_astrbot_root
 from typing import Any
 
 from astrbot.api import logger
@@ -63,26 +62,26 @@ class ImageProcessorService:
         # 表情包识别和分类的合并提示词（不包含内容过滤）
         self.emoji_classification_prompt = getattr(
             plugin_instance, "EMOJI_CLASSIFICATION_PROMPT",
-            """# Role 
-你是一名资深的视觉符号学专家和互联网迷因（Meme/Emoji）分析师。通过分析图像的视觉特征、文字内容和文化语境，你能精准判断图片属性并解读其核心情绪。 
+            """# Role
+你是一名资深的视觉符号学专家和互联网迷因（Meme/Emoji）分析师。通过分析图像的视觉特征、文字内容和文化语境，你能精准判断图片属性并解读其核心情绪。
 
-# Task 
-请对输入的图片进行两步分析： 
-1. **属性判断**：判断是否为“聊天表情包”。 
-2. **情绪分类**：如果是表情包，从指定列表中选出最匹配的情绪。 
+# Task
+请对输入的图片进行两步分析：
+1. **属性判断**：判断是否为“聊天表情包”。
+2. **情绪分类**：如果是表情包，从指定列表中选出最匹配的情绪。
 
---- 
+---
 
-# Step 1: 表情包属性判断 (Binary Classification) 
-请基于以下标准严格筛选。 
+# Step 1: 表情包属性判断 (Binary Classification)
+请基于以下标准严格筛选。
 
-**[判定为“是”的强特征]**： 
-- **视觉风格**：画风简单（线稿/卡通）、有白边（Sticker风格）、低分辨率或明显的压缩痕迹（电子包浆）、夸张的面部特写。 
-- **文字特征**：图片上叠加了文字（特别是粗体/描边字体），且文字旨在表达情绪或吐槽。 
-- **功能意图**：该图片明显是为了在IM聊天（微信/TG/Discord）中代替文字表达情感、反应或状态。 
-- **特殊情况**： 
-    - 二次元/动漫截图，如果带有字幕或表情夸张，**是**表情包。 
-    - 带有文字的动物/人物照片（Meme图），**是**表情包。 
+**[判定为“是”的强特征]**：
+- **视觉风格**：画风简单（线稿/卡通）、有白边（Sticker风格）、低分辨率或明显的压缩痕迹（电子包浆）、夸张的面部特写。
+- **文字特征**：图片上叠加了文字（特别是粗体/描边字体），且文字旨在表达情绪或吐槽。
+- **功能意图**：该图片明显是为了在IM聊天（微信/TG/Discord）中代替文字表达情感、反应或状态。
+- **特殊情况**：
+    - 二次元/动漫截图，如果带有字幕或表情夸张，**是**表情包。
+    - 带有文字的动物/人物照片（Meme图），**是**表情包。
 - **表情包通常具有以下特征**：
     - 尺寸相对较小，主要用于聊天中快速表达情绪或态度；
     - 画面主体清晰突出，通常集中在人物/卡通形象/动物或简洁抽象图案上；
@@ -90,26 +89,26 @@ class ImageProcessorService:
     - 常以方图或接近方图的比例出现（宽高比通常在1:2到2:1之间）；
     - 风格简洁明了，能在短时间内传达情绪。
 
-**[判定为“否”的排除项]**： 
-- **普通摄影**：风景照、无明显情绪导向的普通自拍、证件照。 
-- **信息截屏**：纯粹的软件界面截图、文档截图、电商商品图。 
-- **复杂插画**：用于展示艺术而非沟通的高清壁纸/艺术画作。 
-- **人物语录**：只是群友的发言记录截图，不包含任何表情或动作，通常为头像后面跟着文字。 
-- **注意**：如果无法确认其具有社交沟通功能，一律判定为“非表情包”。 
+**[判定为“否”的排除项]**：
+- **普通摄影**：风景照、无明显情绪导向的普通自拍、证件照。
+- **信息截屏**：纯粹的软件界面截图、文档截图、电商商品图。
+- **复杂插画**：用于展示艺术而非沟通的高清壁纸/艺术画作。
+- **人物语录**：只是群友的发言记录截图，不包含任何表情或动作，通常为头像后面跟着文字。
+- **注意**：如果无法确认其具有社交沟通功能，一律判定为“非表情包”。
 
---- 
+---
 
-# Step 2: 情绪精准分类 (Emotion Classification) 
-仅当Step 1判定为“是”时执行。请综合分析**面部表情**、**肢体动作**和**图片文字**。 
+# Step 2: 情绪精准分类 (Emotion Classification)
+仅当Step 1判定为“是”时执行。请综合分析**面部表情**、**肢体动作**和**图片文字**。
 
-**[分析逻辑]**： 
-1. **图文一致**：表情和文字情绪相同 -> 直接分类。 
-2. **图文冲突（重点）**：如果表情是笑脸，但文字是“想死”、“无语”，请以**整体表达的含义**为准）。 
-3. **模糊匹配原则**： 
-      - 必须从列表 `{emotion_list}` 中选择唯一标签。 
+**[分析逻辑]**：
+1. **图文一致**：表情和文字情绪相同 -> 直接分类。
+2. **图文冲突（重点）**：如果表情是笑脸，但文字是“想死”、“无语”，请以**整体表达的含义**为准）。
+3. **模糊匹配原则**：
+      - 必须从列表 `{emotion_list}` 中选择唯一标签。
       - 识别表情时，除了观察画面中人物或者动漫人物（动物）的表情之外，还需要注意图中出现的其他元素，如文字、动物、人物的动作等，这些都可能对情绪产生影响。
 
-**[强制约束]**： 
+**[强制约束]**：
 - 即使图片情绪复杂，也必须强制归类到 `{emotion_list}` 中最接近的一项，严禁输出空值。
 
 ---
@@ -131,16 +130,16 @@ class ImageProcessorService:
    如果包含裸露、暴力、敏感或违法内容，返回'过滤不通过'。否则返回'通过'。
 
 2. 表情包判断：如果内容过滤通过，进一步判断这张图片是否为聊天表情包。
-   # Role 
-   你是一名资深的视觉符号学专家和互联网迷因（Meme/Emoji）分析师。通过分析图像的视觉特征、文字内容和文化语境，你能精准判断图片属性并解读其核心情绪。 
+   # Role
+   你是一名资深的视觉符号学专家和互联网迷因（Meme/Emoji）分析师。通过分析图像的视觉特征、文字内容和文化语境，你能精准判断图片属性并解读其核心情绪。
 
-   **[判定为“是”的强特征]**： 
-   - **视觉风格**：画风简单（线稿/卡通）、有白边（Sticker风格）、低分辨率或明显的压缩痕迹（电子包浆）、夸张的面部特写。 
-   - **文字特征**：图片上叠加了文字（特别是粗体/描边字体），且文字旨在表达情绪或吐槽。 
-   - **功能意图**：该图片明显是为了在IM聊天（微信/TG/Discord）中代替文字表达情感、反应或状态。 
-   - **特殊情况**： 
-       - 二次元/动漫截图，如果带有字幕或表情夸张，**是**表情包。 
-       - 带有文字的动物/人物照片（Meme图），**是**表情包。 
+   **[判定为“是”的强特征]**：
+   - **视觉风格**：画风简单（线稿/卡通）、有白边（Sticker风格）、低分辨率或明显的压缩痕迹（电子包浆）、夸张的面部特写。
+   - **文字特征**：图片上叠加了文字（特别是粗体/描边字体），且文字旨在表达情绪或吐槽。
+   - **功能意图**：该图片明显是为了在IM聊天（微信/TG/Discord）中代替文字表达情感、反应或状态。
+   - **特殊情况**：
+       - 二次元/动漫截图，如果带有字幕或表情夸张，**是**表情包。
+       - 带有文字的动物/人物照片（Meme图），**是**表情包。
    - **表情包通常具有以下特征**：
        - 尺寸相对较小，主要用于聊天中快速表达情绪或态度；
        - 画面主体清晰突出，通常集中在人物/卡通形象/动物或简洁抽象图案上；
@@ -148,24 +147,24 @@ class ImageProcessorService:
        - 常以方图或接近方图的比例出现（宽高比通常在1:2到2:1之间）；
        - 风格简洁明了，能在短时间内传达情绪。
 
-   **[判定为“否”的排除项]**： 
-   - **普通摄影**：风景照、无明显情绪导向的普通自拍、证件照。 
-   - **信息截屏**：纯粹的软件界面截图、文档截图、电商商品图。 
-   - **复杂插画**：用于展示艺术而非沟通的高清壁纸/艺术画作。 
-   - **注意**：如果无法确认其具有社交沟通功能，一律判定为“非表情包”。 
+   **[判定为“否”的排除项]**：
+   - **普通摄影**：风景照、无明显情绪导向的普通自拍、证件照。
+   - **信息截屏**：纯粹的软件界面截图、文档截图、电商商品图。
+   - **复杂插画**：用于展示艺术而非沟通的高清壁纸/艺术画作。
+   - **注意**：如果无法确认其具有社交沟通功能，一律判定为“非表情包”。
 
 3. 情绪分类：如果是表情包，请进行以下操作：
-   # Step 2: 情绪精准分类 (Emotion Classification) 
-   仅当Step 1判定为“是”时执行。请综合分析**面部表情**、**肢体动作**和**图片文字**。 
+   # Step 2: 情绪精准分类 (Emotion Classification)
+   仅当Step 1判定为“是”时执行。请综合分析**面部表情**、**肢体动作**和**图片文字**。
 
-   **[分析逻辑]**： 
-   1. **图文一致**：表情和文字情绪相同 -> 直接分类。 
-   2. **图文冲突（重点）**：如果表情是笑脸，但文字是“想死”、“无语”，请以**整体表达的含义**为准）。 
-   3. **模糊匹配原则**： 
-      - 必须从列表 `{emotion_list}` 中选择唯一标签。 
+   **[分析逻辑]**：
+   1. **图文一致**：表情和文字情绪相同 -> 直接分类。
+   2. **图文冲突（重点）**：如果表情是笑脸，但文字是“想死”、“无语”，请以**整体表达的含义**为准）。
+   3. **模糊匹配原则**：
+      - 必须从列表 `{emotion_list}` 中选择唯一标签。
       - 识别表情时，除了观察画面中人物或者动漫人物（动物）的表情之外，还需要注意图中出现的其他元素，如文字、动物、人物的动作等，这些都可能对情绪产生影响。
 
-   **[强制约束]**： 
+   **[强制约束]**：
    - 即使图片情绪复杂，也必须强制归类到 `{emotion_list}` 中最接近的一项，严禁输出空值。
 
 请严格按照以下格式返回结果，不要添加任何额外内容：
@@ -249,6 +248,16 @@ class ImageProcessorService:
                 if is_temp and os.path.exists(file_path):
                     await self._safe_remove_file(file_path)
                 return False, None
+
+        # 检查图片是否已存在于持久化索引中
+        if hasattr(self.plugin, "cache_service"):
+            persistent_idx = self.plugin.cache_service.get_cache("index_cache")
+            for k, v in persistent_idx.items():
+                if isinstance(v, dict) and v.get("hash") == hash_val:
+                    logger.debug(f"图片已存在于持久化索引中: {hash_val}")
+                    if is_temp and os.path.exists(file_path):
+                        await self._safe_remove_file(file_path)
+                    return False, None
 
         # 检查图片是否已存在于缓存中
         if hash_val in self._image_cache:
@@ -517,16 +526,17 @@ class ImageProcessorService:
                 response = await self._call_vision_model(event, file_path, prompt)
                 logger.debug(f"表情包分析原始响应: {response}")
 
-                # 解析响应结果
-                parts = response.strip().split("|")
-                if len(parts) < 2:
+                # 解析响应结果 - 使用正则表达式提高健壮性
+                pattern = r'^(是|否)\s*\|\s*([^|]+)$'
+                match = re.match(pattern, response.strip())
+                if not match:
                     error_msg = f"表情包分析响应格式错误: {response}"
                     logger.error(error_msg)
                     raise ValueError(error_msg)
 
                 filter_result = "通过"
-                is_emoji_result = parts[0].strip()
-                emotion_result = parts[1].strip()
+                is_emoji_result = match.group(1).strip()
+                emotion_result = match.group(2).strip()
             else:
                 # 使用内容过滤和表情包分析的合并提示词
                 prompt = self.combined_analysis_prompt.format(
@@ -537,16 +547,17 @@ class ImageProcessorService:
                 response = await self._call_vision_model(event, file_path, prompt)
                 logger.debug(f"内容过滤和表情包分析原始响应: {response}")
 
-                # 解析响应结果
-                parts = response.strip().split("|")
-                if len(parts) < 3:
+                # 解析响应结果 - 使用正则表达式提高健壮性
+                pattern = r'^([^|]+)\s*\|\s*(是|否)\s*\|\s*([^|]+)$'
+                match = re.match(pattern, response.strip())
+                if not match:
                     error_msg = f"内容过滤和表情包分析响应格式错误: {response}"
                     logger.error(error_msg)
                     raise ValueError(error_msg)
 
-                filter_result = parts[0].strip()
-                is_emoji_result = parts[1].strip()
-                emotion_result = parts[2].strip()
+                filter_result = match.group(1).strip()
+                is_emoji_result = match.group(2).strip()
+                emotion_result = match.group(3).strip()
 
             # 处理过滤结果
             if filter_result == "过滤不通过":
@@ -602,14 +613,17 @@ class ImageProcessorService:
             Exception: 当视觉模型调用失败时抛出，包含详细的错误信息和上下文
         """
         try:
-            # 路径处理和验证：确保使用绝对路径并检查文件存在性
-            if not os.path.isabs(img_path):
+            # 路径处理和验证：使用pathlib确保跨平台兼容性
+            img_path_obj = Path(img_path)
+            if not img_path_obj.is_absolute():
                 # 如果是相对路径，根据base_dir构建绝对路径
                 if self.base_dir:
-                    img_path = os.path.abspath(os.path.join(self.base_dir, img_path))
+                    img_path_obj = Path(self.base_dir) / img_path
+                    img_path_obj = img_path_obj.absolute()
                 else:
-                    img_path = os.path.abspath(img_path)
+                    img_path_obj = img_path_obj.absolute()
 
+            img_path = str(img_path_obj)
             if not os.path.exists(img_path):
                 error_msg = f"图片文件不存在: {img_path}"
                 logger.error(error_msg)
@@ -623,24 +637,24 @@ class ImageProcessorService:
             for attempt in range(max_retries):
                 try:
                     # 获取当前会话使用的聊天模型ID
-                    if event and hasattr(event, 'unified_msg_origin'):
-                        umo = event.unified_msg_origin
-                        chat_provider_id = await self.plugin.context.get_current_chat_provider_id(umo=umo)
-                    else:
-                        # 如果没有event或unified_msg_origin，使用默认的聊天模型ID
-                        chat_provider_id = getattr(self.plugin, 'default_chat_provider_id', None)
+                    chat_provider_id = None
+                    if event:
+                        if hasattr(event, "unified_msg_origin"):
+                            umo = event.unified_msg_origin
+                            chat_provider_id = await self.plugin.context.get_current_chat_provider_id(umo=umo)
+                            logger.debug(f"从事件获取的聊天模型ID: {chat_provider_id}")
+
+                    # 如果没有获取到聊天模型ID，使用默认配置
+                    if not chat_provider_id:
+                        chat_provider_id = getattr(self.plugin, "default_chat_provider_id", None)
+                        logger.debug(f"使用默认聊天模型ID: {chat_provider_id}")
 
                     # 使用配置的视觉模型（如果有）
-                    model = (
-                        self.plugin.vision_model
-                        if hasattr(self.plugin, "vision_model")
-                        else None
-                    )
-
-                    logger.debug(f"使用视觉模型 {model} 处理图片")
+                    model = getattr(self.plugin, "vision_model", None)
+                    logger.debug(f"使用视觉模型: {model}")
 
                     # 构建图片的file:///格式URL供LLM访问
-                    file_url = f"file:///{os.path.abspath(img_path)}"
+                    file_url = f"file:///{img_path}"
                     logger.debug(f"构建的图片URL: {file_url}")
 
                     # 调用LLM生成服务
@@ -657,17 +671,17 @@ class ImageProcessorService:
                         if hasattr(result, "result_chain") and result.result_chain:
                             # 优先从result_chain获取格式化文本
                             llm_response_text = result.result_chain.get_plain_text()
-                        elif (
-                            hasattr(result, "completion_text")
-                            and result.completion_text
-                        ):
+                            logger.debug(f"从result_chain获取的响应文本: {llm_response_text}")
+                        elif hasattr(result, "completion_text") and result.completion_text:
                             # 其次从completion_text获取
                             llm_response_text = result.completion_text
+                            logger.debug(f"从completion_text获取的响应文本: {llm_response_text}")
                         else:
                             # 最后使用字符串转换作为兜底
                             llm_response_text = str(result)
+                            logger.debug(f"使用字符串转换获取的响应文本: {llm_response_text}")
 
-                        logger.debug(f"原始LLM响应: {llm_response_text}")
+                        logger.debug(f"最终处理的LLM响应: {llm_response_text}")
                         return llm_response_text.strip()
                 except Exception as e:
                     error_msg = str(e)

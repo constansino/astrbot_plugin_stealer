@@ -16,7 +16,7 @@ from astrbot.api.event.filter import (
 )
 from astrbot.api.message_components import Image, Plain
 from astrbot.api.star import Context, Star, StarTools, register
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_root
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .cache_service import CacheService
 
@@ -484,6 +484,26 @@ class StealerPlugin(Star):
         if is_temp:
             await self._safe_remove_file(file_path)
         return False, idx
+
+    async def _safe_remove_file(self, file_path: str) -> bool:
+        """安全删除文件。
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            bool: 是否删除成功
+        """
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.debug(f"已删除文件: {file_path}")
+                return True
+            logger.debug(f"文件不存在，无需删除: {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"删除文件失败: {e}")
+            return False
 
     def _is_in_parentheses(self, text: str, index: int) -> bool:
         """判断字符串中指定索引位置是否在括号内。

@@ -72,10 +72,10 @@ class CommandHandler:
         """手动推送指定分类的表情包。支持使用分类名称或别名。"""
         if not self.plugin.base_dir:
             return event.plain_result("插件未正确配置，缺少图片存储目录")
-        
+
         # 初始化目标分类变量
         target_category = None
-        
+
         # 如果提供了别名，优先使用别名查找实际分类
         if alias:
             aliases = await self.plugin._load_aliases()
@@ -84,13 +84,13 @@ class CommandHandler:
                 target_category = aliases[alias]
             else:
                 return event.plain_result("未找到指定的别名")
-        
+
         # 如果没有提供别名或别名不存在，使用分类参数
         # 如果分类参数也为空，则使用默认分类
         target_category = target_category or category or (
             self.plugin.categories[0] if self.plugin.categories else "happy"
         )
-        
+
         # 将目标分类赋值给cat变量，保持后续代码兼容性
         cat = target_category
         cat_dir = self.plugin.base_dir / "categories" / cat
