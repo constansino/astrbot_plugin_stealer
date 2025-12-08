@@ -659,12 +659,12 @@ class ImageProcessorService:
                         logger.debug(f"使用默认聊天模型ID: {chat_provider_id}")
 
                     # 使用配置的视觉模型（如果有）
-                    model = getattr(self.plugin, "vision_model", None)
+                    model = getattr(self.plugin, "vision_provider_id", None)
                     logger.debug(f"使用视觉模型: {model}")
 
                     # 检查是否配置了VLM
                     if not model:
-                        error_msg = "未配置视觉模型(vision_model)，无法进行图片分析"
+                        error_msg = "未配置视觉模型(vision_provider_id)，无法进行图片分析"
                         logger.error(error_msg)
                         raise ValueError(error_msg)
 
