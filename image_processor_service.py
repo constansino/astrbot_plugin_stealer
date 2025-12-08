@@ -575,9 +575,9 @@ class ImageProcessorService:
                         category = valid_cat
                         break
                 else:
-                    # 根据提示词优化，VLM应该总是返回有效分类，这里作为最后的兜底
-                    logger.debug(f"无法从响应中提取有效分类，使用sigh作为兜底: {response}")
-                    category = "sigh"
+                    # 无法提取有效分类，返回空结果
+                    logger.debug(f"无法从响应中提取有效分类: {response}")
+                    return "", [], "", ""
 
                 # 如果不是表情包，返回特定标识
                 if is_emoji_result.lower() != "是":
@@ -593,6 +593,17 @@ class ImageProcessorService:
             # 添加更多上下文信息
             error_msg = f"图片分类失败 [图片路径: {file_path}]: {e}"
             logger.error(error_msg)
+
+            # 检查错误类型，添加更明确的错误提醒
+            if "未配置视觉模型" in str(e) or "vision_model" in str(e).lower():
+                logger.error("请检查插件配置，确保已正确设置视觉模型(vision_model)参数")
+            elif "429" in str(e) or "RateLimit" in str(e):
+                logger.error("视觉模型请求被限流，请稍后再试或调整vision_max_retries和vision_retry_delay配置")
+            elif "图片文件不存在" in str(e):
+                logger.error("图片文件不存在，可能是文件路径错误或文件已被删除")
+            else:
+                logger.error("视觉模型调用失败，可能是模型配置错误或API密钥问题")
+
             # 根据测试要求，无法分类时返回空字符串
             return "", [], "", ""
 
@@ -650,6 +661,12 @@ class ImageProcessorService:
                     # 使用配置的视觉模型（如果有）
                     model = getattr(self.plugin, "vision_model", None)
                     logger.debug(f"使用视觉模型: {model}")
+
+                    # 检查是否配置了VLM
+                    if not model:
+                        error_msg = "未配置视觉模型(vision_model)，无法进行图片分析"
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
 
                     # 构建图片的file:///格式URL供LLM访问
                     file_url = f"file:///{img_path}"
