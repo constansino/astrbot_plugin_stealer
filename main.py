@@ -122,7 +122,11 @@ class StealerPlugin(Star):
         self.steal_emoji = self.config_service.steal_emoji
         self.content_filtration = self.config_service.content_filtration
 
-        self.vision_provider_id = self.config_service.vision_provider_id
+        self.vision_provider_id = (
+            str(self.config_service.get_config("vision_provider_id"))
+            if self.config_service.get_config("vision_provider_id")
+            else None
+        )
         self.raw_retention_minutes = self.config_service.raw_retention_minutes
 
 
@@ -801,10 +805,7 @@ class StealerPlugin(Star):
         self._persist_config()
         yield event.plain_result(f"已设置视觉模型: {provider_id}")
 
-    @filter.command("meme show_providers")
-    async def show_providers(self, event: AstrMessageEvent):
-        vp = self.vision_provider_id or "当前会话"
-        yield event.plain_result(f"视觉模型: {vp}")
+
 
     @filter.command("meme status")
     async def status(self, event: AstrMessageEvent):

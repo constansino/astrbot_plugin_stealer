@@ -167,7 +167,7 @@ meme status
 | `meme on` | 开启偷表情包功能 |
 | `meme off` | 关闭偷表情包功能 |
 | `meme set_vision <provider_id>` | 设置视觉模型 |
-| `meme show_providers` | 查看当前模型配置 |
+| `meme show_providers` | 查看当前视觉模型设置 |
 | `meme auto_on` | 开启自动随聊表情 |
 | `meme auto_off` | 关闭自动随聊表情 |
 | `meme status` | 查看当前插件状态 |

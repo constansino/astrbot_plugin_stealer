@@ -659,7 +659,7 @@ class ImageProcessorService:
                         logger.debug(f"使用默认聊天模型ID: {chat_provider_id}")
 
                     # 使用配置的视觉模型（如果有）
-                    model = getattr(self.plugin, "vision_provider_id", None)
+                    model = getattr(self.plugin.config_service, "vision_provider_id", None)
                     logger.debug(f"使用视觉模型: {model}")
 
                     # 检查是否配置了VLM
