@@ -100,7 +100,7 @@ class CommandHandler:
         if not files:
             return event.plain_result("该分类暂无表情包")
         pick = random.choice(files)
-        b64 = await self.plugin._file_to_base64(pick.as_posix())
+        b64 = await self.plugin.image_processor_service._file_to_base64(pick.as_posix())
         chain = event.make_result().base64_image(b64).message_chain
         return event.result_with_message_chain(chain)
 

@@ -190,7 +190,7 @@ class EventHandler:
             new_result.message(cleaned_text.strip())
 
         # 添加图片
-        b64 = await self.plugin._file_to_base64(pick.as_posix())
+        b64 = await self.plugin.image_processor_service._file_to_base64(pick.as_posix())
         new_result.base64_image(b64)
 
         # 设置新的结果对象

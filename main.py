@@ -805,7 +805,7 @@ class StealerPlugin(Star):
             new_result.message(cleaned_text.strip())
 
         # 添加图片
-        base64_data = await self._file_to_base64(picked_image.as_posix())
+        base64_data = await self.image_processor_service._file_to_base64(picked_image.as_posix())
         new_result.base64_image(base64_data)
 
         # 设置新的结果对象
@@ -998,7 +998,7 @@ class StealerPlugin(Star):
             yield event.plain_result("该分类暂无表情包")
             return
         pick = random.choice(files)
-        b64 = await self._file_to_base64(pick.as_posix())
+        b64 = await self.image_processor_service._file_to_base64(pick.as_posix())
         chain = MessageChain().base64_image(b64)
         # 统一使用yield返回结果，保持交互体验一致
         yield event.result_with_message_chain(chain)
