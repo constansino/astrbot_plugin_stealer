@@ -100,8 +100,7 @@ meme status
 | `maintenance_interval` | int | 10 | 后台维护任务的执行周期（分钟），包括容量控制和文件清理 |
 | `steal_emoji` | boolean | true | 是否开启聊天图片偷取和清理功能（关闭后将停止偷取新图片并暂停所有清理操作） |
 | `content_filtration` | bool | false | 是否开启内容审核 |
-| `filtration_prompt` | string | 符合公序良俗 | 内容审核提示词 |
-| `emoji_only` | bool | true | 是否仅偷取聊天表情包（过滤普通图片/截图/长图） |
+
 | `raw_retention_hours` | int | 24 | raw目录和categories/未分类目录中图片的保留期限（小时） |
 | `raw_clean_interval` | int | 60 | raw目录和categories/未分类目录的清理时间间隔（分钟） |
 
@@ -153,7 +152,7 @@ meme status
 | `meme auto_on` | 开启自动随聊表情 |
 | `meme auto_off` | 关闭自动随聊表情 |
 | `meme status` | 查看当前插件状态 |
-| `meme emoji_only <on/off>` | 切换仅偷取表情包模式 |
+
 | `meme push <category> [alias]` | 推送指定分类的表情包（管理员指令） |
 | `meme debug_image` | 调试图片处理（管理员指令） |
 

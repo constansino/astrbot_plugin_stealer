@@ -42,11 +42,6 @@
     "type": "bool",
     "default": false
   },
-  "filtration_prompt": {
-    "description": "内容审核提示词",
-    "type": "string",
-    "default": "符合公序良俗"
-  },
 
   "raw_retention_hours": {
     "description": "raw目录中图片的保留期限（小时）",

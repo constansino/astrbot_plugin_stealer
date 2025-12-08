@@ -73,24 +73,20 @@ class ImageProcessorService:
         # 配置参数
         self.categories = []
         self.content_filtration = False
-        self.filtration_prompt = ""
         self.vision_provider_id = ""
 
-    def update_config(self, categories=None, content_filtration=None, filtration_prompt=None, vision_provider_id=None):
+    def update_config(self, categories=None, content_filtration=None, vision_provider_id=None):
         """更新图片处理器配置。
 
         Args:
             categories: 分类列表
             content_filtration: 是否进行内容过滤
-            filtration_prompt: 内容过滤提示
             vision_provider_id: 视觉模型提供者ID
         """
         if categories is not None:
             self.categories = categories
         if content_filtration is not None:
             self.content_filtration = content_filtration
-        if filtration_prompt is not None:
-            self.filtration_prompt = filtration_prompt
         if vision_provider_id is not None:
             self.vision_provider_id = vision_provider_id
 

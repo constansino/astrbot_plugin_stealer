@@ -51,7 +51,6 @@ class StealerPlugin(Star):
 
     # 常量定义
     BACKEND_TAG = "emoji_stealer"
-    DEFAULT_FILTRATION_PROMPT = "符合公序良俗"
 
     # 提示词常量
     IMAGE_FILTER_PROMPT = "根据以下审核准则判断图片是否符合: {filtration_rule}。只返回是或否。"
@@ -59,8 +58,7 @@ class StealerPlugin(Star):
 请使用&&emotion&&格式返回，例如&&happy&&、&&sad&&。
 只返回表情标签，不要添加任何其他内容。文本: {text}"""
 
-    # 从外部文件加载的提示词
-    IMAGE_CLASSIFICATION_PROMPT = ""
+    # 从外部文件加载的提示词（已迁移到ImageProcessorService）
 
     # 缓存相关常量和方法已迁移到CacheService类
 
@@ -115,14 +113,13 @@ class StealerPlugin(Star):
         self.maintenance_interval = self.config_service.maintenance_interval
         self.steal_emoji = self.config_service.steal_emoji
         self.content_filtration = self.config_service.content_filtration
-        self.filtration_prompt = self.config_service.filtration_prompt
-        self.emoji_only = self.config_service.emoji_only
+
         self.vision_provider_id = self.config_service.vision_provider_id
         self.raw_retention_hours = self.config_service.raw_retention_hours
         self.raw_clean_interval = self.config_service.raw_clean_interval
 
         # 添加缺失的兼容mainv2的配置项
-        self.raw_emoji_only = getattr(self.config_service, "raw_emoji_only", False)
+
         self.max_raw_emoji_size = getattr(self.config_service, "max_raw_emoji_size", 3 * 1024 * 1024)
         self.steal_type = getattr(self.config_service, "steal_type", "both")
 
@@ -170,14 +167,13 @@ class StealerPlugin(Star):
                 self.do_replace = self.config_service.get_config("do_replace")
                 self.maintenance_interval = self.config_service.get_config("maintenance_interval")
                 self.content_filtration = self.config_service.get_config("content_filtration")
-                self.filtration_prompt = self.config_service.get_config("filtration_prompt")
-                self.emoji_only = self.config_service.get_config("emoji_only")
+        
                 self.vision_provider_id = str(self.config_service.get_config("vision_provider_id")) if self.config_service.get_config("vision_provider_id") else None
                 self.raw_retention_hours = self.config_service.get_config("raw_retention_hours")
                 self.raw_clean_interval = self.config_service.get_config("raw_clean_interval")
 
                 # 更新兼容mainv2的配置属性
-                self.raw_emoji_only = config_dict.get("raw_emoji_only", getattr(self.config_service, "raw_emoji_only", False))
+        
                 self.max_raw_emoji_size = config_dict.get("max_raw_emoji_size", getattr(self.config_service, "max_raw_emoji_size", 3 * 1024 * 1024))
                 self.steal_type = config_dict.get("steal_type", getattr(self.config_service, "steal_type", "both"))
 
@@ -188,9 +184,8 @@ class StealerPlugin(Star):
                 self.image_processor_service.update_config(
                     categories=self.categories,
                     content_filtration=self.content_filtration,
-                    filtration_prompt=self.filtration_prompt,
                     vision_provider_id=self.vision_provider_id,
-                    emoji_only=self.emoji_only
+
                 )
 
                 self.emotion_analyzer_service.update_config(
@@ -221,12 +216,10 @@ class StealerPlugin(Star):
                 if prompts_path.exists():
                     with open(prompts_path, encoding="utf-8") as f:
                         prompts = json.load(f)
-                        self.IMAGE_CLASSIFICATION_PROMPT = prompts.get("IMAGE_CLASSIFICATION_PROMPT", self.IMAGE_CLASSIFICATION_PROMPT)
                         logger.info(f"已加载提示词文件: {prompts_path}")
-
-                        # 更新ImageProcessorService的提示词
-                        if hasattr(self, "image_processor_service") and hasattr(self.image_processor_service, "image_classification_prompt"):
-                            self.image_processor_service.image_classification_prompt = self.IMAGE_CLASSIFICATION_PROMPT
+                        # 将加载的提示词赋值给插件实例属性
+                        for key, value in prompts.items():
+                            setattr(self, key, value)
                 else:
                     logger.warning(f"提示词文件不存在: {prompts_path}")
             except Exception as e:
@@ -239,8 +232,7 @@ class StealerPlugin(Star):
             self.do_replace = self.config_service.get_config("do_replace")
             self.maintenance_interval = self.config_service.get_config("maintenance_interval")
             self.content_filtration = self.config_service.get_config("content_filtration")
-            self.filtration_prompt = self.config_service.get_config("filtration_prompt")
-            self.emoji_only = self.config_service.get_config("emoji_only")
+    
             self.vision_provider_id = str(self.config_service.get_config("vision_provider_id")) if self.config_service.get_config("vision_provider_id") else None
             self.raw_retention_hours = self.config_service.get_config("raw_retention_hours")
             self.raw_clean_interval = self.config_service.get_config("raw_clean_interval")
@@ -326,8 +318,7 @@ class StealerPlugin(Star):
             "do_replace": self.do_replace,
             "maintenance_interval": self.maintenance_interval,
             "content_filtration": self.content_filtration,
-            "filtration_prompt": self.filtration_prompt,
-            "emoji_only": self.emoji_only,
+
             "vision_provider_id": self.vision_provider_id,
             "raw_retention_hours": self.raw_retention_hours,
             "raw_clean_interval": self.raw_clean_interval,
@@ -402,35 +393,9 @@ class StealerPlugin(Star):
 
     # _normalize_category 方法已迁移到 EmotionAnalyzer 类
 
-    def _is_likely_emoji_by_metadata(self, file_path: str) -> bool:
-        """基于文件大小与图像尺寸做一次启发式过滤，减少明显非表情图片。
 
-        这里只做“明显不是表情包”的快速排除，避免误删正常表情：
-        - 非常大的文件（>3MB）且分辨率较高时更像是照片/长图
-        - 长宽比极端（>6:1）时更像长截图/漫画页
-        - 过小的图片也直接排除
-        """
-        return self.image_processor_service._is_likely_emoji_by_metadata(file_path)
 
-    async def _classify_image(self, event: AstrMessageEvent | None, file_path: str) -> tuple[str, list[str], str, str]:
-        """调用多模态模型对图片进行情绪分类与标签抽取。
 
-        Args:
-            event: 当前消息事件，用于获取 provider 配置。
-            file_path: 本地图片路径。
-
-        Returns:
-            Tuple[str, List[str], str, str]: 类别、标签、详细描述、情感标签。
-        """
-        try:
-            # 委托给ImageProcessorService类处理
-            result = await self.image_processor_service.classify_image(
-                event=event,
-                file_path=file_path,
-                emoji_only=self.emoji_only,
-                categories=self.categories
-            )
-            return result
         except FileNotFoundError as e:
             logger.error(f"图片文件不存在: {e}", exc_info=True)
             fallback = "speechless" if "speechless" in self.categories else "其它"
@@ -448,47 +413,6 @@ class StealerPlugin(Star):
             fallback = "speechless" if "speechless" in self.categories else "其它"
             return fallback, [], "", fallback
 
-    async def _compute_hash(self, file_path: str) -> str:
-        try:
-            return await self.image_processor_service._compute_hash(file_path)
-        except Exception as e:
-            logger.error(f"计算哈希值失败: {e}")
-            return ""
-
-    async def _file_to_base64(self, path: str) -> str:
-        try:
-            return await self.image_processor_service._file_to_base64(path)
-        except Exception as e:
-            logger.error(f"文件转Base64失败: {e}")
-            return ""
-
-    async def _filter_image(self, event: AstrMessageEvent | None, file_path: str) -> bool:
-        try:
-            return await self.image_processor_service._filter_image(
-                event,
-                file_path,
-                self.filtration_prompt,
-                self.content_filtration
-            )
-        except Exception as e:
-            logger.error(f"调用图片处理器过滤方法失败: {e}")
-            return True
-
-    async def _store_image(self, src_path: str, category: str) -> str:
-        try:
-            return await self.image_processor_service._store_image(src_path, category)
-        except Exception as e:
-            logger.error(f"调用图片处理器存储方法失败: {e}")
-            return src_path
-
-    async def _safe_remove_file(self, file_path: str) -> bool:
-        """安全删除文件，处理可能的异常"""
-        try:
-            return await self.image_processor_service._safe_remove_file(file_path)
-        except Exception as e:
-            logger.error(f"删除文件失败: {e}")
-            return False
-
     async def _process_image(self, event: AstrMessageEvent | None, file_path: str, is_temp: bool = False, idx: dict[str, Any] | None = None) -> tuple[bool, dict[str, Any] | None]:
         """统一处理图片的方法，包括过滤、分类、存储和索引更新
 
@@ -502,13 +426,6 @@ class StealerPlugin(Star):
             (成功与否, 更新后的索引字典)
         """
         try:
-            # 检查文件是否存在
-            if not os.path.exists(file_path):
-                logger.error(f"图片文件不存在: {file_path}")
-                if is_temp:
-                    await self._safe_remove_file(file_path)  # 清理临时文件
-                return False, idx
-
             # 委托给ImageProcessorService类处理
             success, updated_idx = await self.image_processor_service.process_image(
                 event=event,
@@ -516,9 +433,8 @@ class StealerPlugin(Star):
                 is_temp=is_temp,
                 idx=idx,
                 categories=self.categories,
-                emoji_only=self.emoji_only,
+
                 content_filtration=self.content_filtration,
-                filtration_prompt=self.filtration_prompt,
                 backend_tag=self.backend_tag
             )
 
@@ -901,32 +817,19 @@ class StealerPlugin(Star):
 
 
 
-    @filter.command("meme emoji_only")
-    async def meme_emoji_only(self, event: AstrMessageEvent, enable: str = ""):
-        """切换是否仅偷取表情包模式。"""
-        if enable.lower() in ["on", "开启", "true"]:
-            self.emoji_only = True
-            self._persist_config()
-            yield event.plain_result("已开启仅偷取表情包模式")
-        elif enable.lower() in ["off", "关闭", "false"]:
-            self.emoji_only = False
-            self._persist_config()
-            yield event.plain_result("已关闭仅偷取表情包模式")
-        else:
-            status = "开启" if self.emoji_only else "关闭"
-            yield event.plain_result(f"当前仅偷取表情包模式: {status}")
+
 
     @filter.command("meme status")
     async def status(self, event: AstrMessageEvent):
         """显示当前偷取状态与后台标识。"""
         st_on = "开启" if self.enabled else "关闭"
         st_auto = "开启" if self.auto_send else "关闭"
-        st_emoji_only = "开启" if self.emoji_only else "关闭"
+
         idx = await self._load_index()
         # 添加视觉模型信息
         vision_model = self.vision_provider_id or "未设置（将使用当前会话默认模型）"
         yield event.plain_result(
-            f"偷取: {st_on}\n自动发送: {st_auto}\n仅偷取表情包: {st_emoji_only}\n已注册数量: {len(idx)}\n概率: {self.emoji_chance}\n上限: {self.max_reg_num}\n替换: {self.do_replace}\n维护周期: {self.maintenance_interval}min\n审核: {self.content_filtration}\n视觉模型: {vision_model}"
+            f"偷取: {st_on}\n自动发送: {st_auto}\n已注册数量: {len(idx)}\n概率: {self.emoji_chance}\n上限: {self.max_reg_num}\n替换: {self.do_replace}\n维护周期: {self.maintenance_interval}min\n审核: {self.content_filtration}\n视觉模型: {vision_model}"
         )
 
     async def get_count(self) -> int:
