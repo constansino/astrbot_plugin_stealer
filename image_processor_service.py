@@ -246,7 +246,7 @@ class ImageProcessorService:
             if isinstance(v, dict) and v.get("hash") == hash_val:
                 logger.debug(f"图片已存在于索引中: {hash_val}")
                 if is_temp and os.path.exists(file_path):
-                    await self._safe_remove_file(file_path)
+                    await self.plugin._safe_remove_file(file_path)
                 return False, None
 
         # 检查图片是否已存在于持久化索引中
@@ -256,7 +256,7 @@ class ImageProcessorService:
                 if isinstance(v, dict) and v.get("hash") == hash_val:
                     logger.debug(f"图片已存在于持久化索引中: {hash_val}")
                     if is_temp and os.path.exists(file_path):
-                        await self._safe_remove_file(file_path)
+                        await self.plugin._safe_remove_file(file_path)
                     return False, None
 
         # 检查图片是否已存在于缓存中
@@ -277,14 +277,14 @@ class ImageProcessorService:
                 if category == "过滤不通过" or emotion == "过滤不通过":
                     logger.debug(f"图片内容过滤不通过（缓存），跳过存储: {hash_val}")
                     if is_temp and os.path.exists(file_path):
-                        await self._safe_remove_file(file_path)  # 清理临时文件
+                        await self.plugin._safe_remove_file(file_path)  # 清理临时文件
                     return False, None
 
                 # 处理非表情包的缓存结果
                 if category == "非表情包" or emotion == "非表情包":
                     logger.debug(f"图片非表情包（缓存），跳过存储: {hash_val}")
                     if is_temp and os.path.exists(file_path):
-                        await self._safe_remove_file(file_path)  # 清理临时文件
+                        await self.plugin._safe_remove_file(file_path)  # 清理临时文件
                     return False, None
 
                 # 处理有效分类的缓存结果
@@ -365,14 +365,14 @@ class ImageProcessorService:
             if category == "过滤不通过" or emotion == "过滤不通过":
                 logger.debug(f"图片内容过滤不通过，跳过存储: {raw_path}")
                 if is_temp:
-                    await self._safe_remove_file(raw_path)  # 清理临时文件
+                    await self.plugin._safe_remove_file(raw_path)  # 清理临时文件
                 return False, None
 
             # 处理非表情包的情况
             if category == "非表情包" or emotion == "非表情包":
                 logger.debug(f"图片非表情包，跳过存储: {raw_path}")
                 if is_temp:
-                    await self._safe_remove_file(raw_path)  # 清理临时文件
+                    await self.plugin._safe_remove_file(raw_path)  # 清理临时文件
                 return False, None
 
             # 处理有效分类结果
@@ -427,7 +427,7 @@ class ImageProcessorService:
             logger.error(error_msg)
             # 确保临时文件被正确清理
             if is_temp:
-                await self._safe_remove_file(raw_path)
+                await self.plugin._safe_remove_file(raw_path)
             # 重新抛出异常，添加更多上下文信息
             raise Exception(error_msg) from e
 
@@ -527,7 +527,7 @@ class ImageProcessorService:
                 logger.debug(f"表情包分析原始响应: {response}")
 
                 # 解析响应结果 - 使用正则表达式提高健壮性
-                pattern = r'^(是|否)\s*\|\s*([^|]+)$'
+                pattern = r"^(是|否)\s*\|\s*([^|]+)$"
                 match = re.match(pattern, response.strip())
                 if not match:
                     error_msg = f"表情包分析响应格式错误: {response}"
@@ -548,7 +548,7 @@ class ImageProcessorService:
                 logger.debug(f"内容过滤和表情包分析原始响应: {response}")
 
                 # 解析响应结果 - 使用正则表达式提高健壮性
-                pattern = r'^([^|]+)\s*\|\s*(是|否)\s*\|\s*([^|]+)$'
+                pattern = r"^([^|]+)\s*\|\s*(是|否)\s*\|\s*([^|]+)$"
                 match = re.match(pattern, response.strip())
                 if not match:
                     error_msg = f"内容过滤和表情包分析响应格式错误: {response}"
@@ -759,25 +759,7 @@ class ImageProcessorService:
             logger.error(f"文件转换为base64失败: {e}")
             return ""
 
-    async def _safe_remove_file(self, file_path: str) -> bool:
-        """安全删除文件。
 
-        Args:
-            file_path: 文件路径
-
-        Returns:
-            bool: 是否删除成功
-        """
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.debug(f"已删除文件: {file_path}")
-                return True
-            logger.debug(f"文件不存在，无需删除: {file_path}")
-            return True
-        except Exception as e:
-            logger.error(f"删除文件失败: {e}")
-            return False
 
     async def _store_image(self, src_path: str, category: str) -> str:
         """将图片存储到指定分类目录。

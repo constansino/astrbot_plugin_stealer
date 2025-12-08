@@ -120,15 +120,9 @@ class StealerPlugin(Star):
         self.content_filtration = self.config_service.content_filtration
 
         self.vision_provider_id = self.config_service.vision_provider_id
-        self.raw_retention_hours = self.config_service.raw_retention_hours
-        self.raw_clean_interval = self.config_service.raw_clean_interval
+        self.raw_retention_minutes = self.config_service.raw_retention_minutes
 
-        # 添加缺失的兼容mainv2的配置项
 
-        self.max_raw_emoji_size = getattr(
-            self.config_service, "max_raw_emoji_size", 3 * 1024 * 1024
-        )
-        self.steal_type = getattr(self.config_service, "steal_type", "both")
 
         # 获取分类列表
         self.categories = self.config_service.categories
@@ -176,28 +170,18 @@ class StealerPlugin(Star):
                 self.content_filtration = self.config_service.get_config(
                     "content_filtration"
                 )
+                self.steal_emoji = self.config_service.get_config("steal_emoji")
 
                 self.vision_provider_id = (
                     str(self.config_service.get_config("vision_provider_id"))
                     if self.config_service.get_config("vision_provider_id")
                     else None
                 )
-                self.raw_retention_hours = self.config_service.get_config(
-                    "raw_retention_hours"
-                )
-                self.raw_clean_interval = self.config_service.get_config(
-                    "raw_clean_interval"
+                self.raw_retention_minutes = self.config_service.get_config(
+                "raw_retention_minutes"
                 )
 
-                # 更新兼容mainv2的配置属性
 
-                self.max_raw_emoji_size = config_dict.get(
-                    "max_raw_emoji_size",
-                    getattr(self.config_service, "max_raw_emoji_size", 3 * 1024 * 1024),
-                )
-                self.steal_type = config_dict.get(
-                    "steal_type", getattr(self.config_service, "steal_type", "both")
-                )
 
                 # 更新分类列表
                 self.categories = (
@@ -270,11 +254,8 @@ class StealerPlugin(Star):
                 if self.config_service.get_config("vision_provider_id")
                 else None
             )
-            self.raw_retention_hours = self.config_service.get_config(
-                "raw_retention_hours"
-            )
-            self.raw_clean_interval = self.config_service.get_config(
-                "raw_clean_interval"
+            self.raw_retention_minutes = self.config_service.get_config(
+                "raw_retention_minutes"
             )
             self.categories = (
                 self.config_service.get_config("categories") or self.CATEGORIES
@@ -363,8 +344,7 @@ class StealerPlugin(Star):
                 "maintenance_interval": self.maintenance_interval,
                 "content_filtration": self.content_filtration,
                 "vision_provider_id": self.vision_provider_id,
-                "raw_retention_hours": self.raw_retention_hours,
-                "raw_clean_interval": self.raw_clean_interval,
+                "raw_retention_minutes": self.raw_retention_minutes,
                 "enabled": self.enabled,
             }
 
@@ -695,24 +675,22 @@ class StealerPlugin(Star):
         await self.event_handler._enforce_capacity(idx)
 
     @filter.on_decorating_result()
-    async def before_send(self, event: AstrMessageEvent, *args, **kwargs):
-        if not self.auto_send or not self.base_dir:
-            return
-        result = event.get_result()
-        # 只在有文本结果时尝试匹配表情包
-        if result is None:
-            return
+    async def _prepare_emoji_response(self, event: AstrMessageEvent, result):
+        """准备表情包响应的公共逻辑。"""
+        if not result or not hasattr(result, "chain") or not hasattr(result, "get_plain_text"):
+            return False
 
         # 文本仅用于本地规则提取情绪关键字，不再请求额外的 LLM
-        text = result.get_plain_text() or event.get_message_str()
-        if not text or not text.strip():
+        text = result.get_plain_text() or event.get_message_str() or ""
+        if not text.strip():
             logger.debug("没有可处理的文本内容，未触发图片发送")
-            return
+            return False
 
         emotions, cleaned_text = await self._extract_emotions_from_text(event, text)
+        text_updated = cleaned_text != text
 
         # 先执行标签清理，无论是否发送表情包都需要清理标签
-        if cleaned_text != text:
+        if text_updated:
             # 创建新的结果对象并更新内容
             new_result = event.make_result().set_result_content_type(
                 result.result_content_type
@@ -737,7 +715,7 @@ class StealerPlugin(Star):
         # 如果没有情绪标签，不需要继续处理图片发送
         if not emotions:
             logger.debug("未从文本中提取到情绪关键词，未触发图片发送")
-            return
+            return text_updated
 
         # 只有在有情绪标签时才检查发送概率
         try:
@@ -745,18 +723,17 @@ class StealerPlugin(Star):
             # 兜底保护，防止配置错误导致永远/从不触发
             if chance <= 0:
                 logger.debug("表情包自动发送概率为0，未触发图片发送")
-                return
+                return text_updated
             if chance > 1:
                 chance = 1.0
             if random.random() >= chance:
                 logger.debug(f"表情包自动发送概率检查未通过 ({chance}), 未触发图片发送")
-                return
-        except Exception:
-            logger.error("解析表情包自动发送概率配置失败，未触发图片发送")
-            return
+                return text_updated
+        except Exception as e:
+            logger.error(f"解析表情包自动发送概率配置失败: {e}，未触发图片发送")
+            return text_updated
 
         logger.debug("表情包自动发送概率检查通过，开始处理图片发送")
-
         logger.debug(f"提取到情绪关键词: {emotions}")
 
         # 目前只取第一个识别到的情绪类别
@@ -764,78 +741,59 @@ class StealerPlugin(Star):
         cat_dir = self.base_dir / "categories" / category
         if not cat_dir.exists():
             logger.debug(f"情绪'{category}'对应的图片目录不存在，未触发图片发送")
-            # 目录不存在时，仍需使用清理后的文本
-            if cleaned_text != text:
-                # 创建新的结果对象并更新内容
-                new_result = event.make_result().set_result_content_type(
-                    result.result_content_type
-                )
+            return text_updated
 
-                # 添加除了Plain文本外的其他组件
-                for comp in result.chain:
-                    if not isinstance(comp, Plain):
-                        new_result.chain.append(comp)
+        try:
+            files = [p for p in cat_dir.iterdir() if p.is_file()]
+            if not files:
+                logger.debug(f"情绪'{category}'对应的图片目录为空，未触发图片发送")
+                return text_updated
 
-                # 添加清除标签后的文本
-                if cleaned_text.strip():
-                    new_result.message(cleaned_text.strip())
+            logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片")
+            picked_image = random.choice(files)
+            image_index = await self._load_index()
+            image_record = image_index.get(picked_image.as_posix())
+            if isinstance(image_record, dict):
+                image_record["usage_count"] = int(image_record.get("usage_count", 0)) + 1
+                image_record["last_used"] = int(asyncio.get_event_loop().time())
+                image_index[picked_image.as_posix()] = image_record
+                await self._save_index(image_index)
 
-                # 设置新的结果对象
-                event.set_result(new_result)
+            # 创建新的结果对象并更新内容
+            new_result = event.make_result().set_result_content_type(
+                result.result_content_type
+            )
+
+            # 添加除了Plain文本外的其他组件
+            for comp in result.chain:
+                if not isinstance(comp, Plain):
+                    new_result.chain.append(comp)
+
+            # 添加清除标签后的文本
+            if cleaned_text.strip():
+                new_result.message(cleaned_text.strip())
+
+            # 添加图片
+            b64 = await self.image_processor_service._file_to_base64(picked_image.as_posix())
+            new_result.base64_image(b64)
+
+            # 设置新的结果对象
+            event.set_result(new_result)
+            return True
+        except (FileNotFoundError, PermissionError) as e:
+            logger.error(f"访问情绪图片目录失败: {e}", exc_info=True)
+            return text_updated
+
+    async def before_send(self, event: AstrMessageEvent, *args, **kwargs):
+        """发送消息前的处理：根据文本内容匹配并添加表情包。"""
+        if not self.auto_send or not self.base_dir:
+            return
+        result = event.get_result()
+        # 只在有文本结果时尝试匹配表情包
+        if result is None:
             return
 
-        files = [p for p in cat_dir.iterdir() if p.is_file()]
-        if not files:
-            logger.debug(f"情绪'{category}'对应的图片目录为空，未触发图片发送")
-            # 目录为空时，仍需使用清理后的文本
-            if cleaned_text != text:
-                # 创建新的结果对象并更新内容
-                new_result = event.make_result().set_result_content_type(
-                    result.result_content_type
-                )
-
-                # 添加除了Plain文本外的其他组件
-                for comp in result.chain:
-                    if not isinstance(comp, Plain):
-                        new_result.chain.append(comp)
-
-                # 添加清除标签后的文本
-                if cleaned_text.strip():
-                    new_result.message(cleaned_text.strip())
-
-                # 设置新的结果对象
-                event.set_result(new_result)
-            return
-
-        logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片")
-        picked_image = random.choice(files)
-        image_index = await self._load_index()
-        image_record = image_index.get(picked_image.as_posix())
-        if isinstance(image_record, dict):
-            image_record["usage_count"] = int(image_record.get("usage_count", 0)) + 1
-            image_record["last_used"] = int(asyncio.get_event_loop().time())
-            image_index[picked_image.as_posix()] = image_record
-            await self._save_index(image_index)
-        # 创建新的结果对象并更新内容
-        new_result = event.make_result().set_result_content_type(
-            result.result_content_type
-        )
-
-        # 添加除了Plain文本外的其他组件
-        for comp in result.chain:
-            if not isinstance(comp, Plain):
-                new_result.chain.append(comp)
-
-        # 添加清除标签后的文本
-        if cleaned_text.strip():
-            new_result.message(cleaned_text.strip())
-
-        # 添加图片
-        base64_data = await self.image_processor_service._file_to_base64(picked_image.as_posix())
-        new_result.base64_image(base64_data)
-
-        # 设置新的结果对象
-        event.set_result(new_result)
+        await self._prepare_emoji_response(event, result)
 
     @filter.command("meme on")
     async def meme_on(self, event: AstrMessageEvent):

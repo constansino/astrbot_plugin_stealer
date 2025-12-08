@@ -8,8 +8,7 @@
   "maintenance_interval": 10,
   "content_filtration": false,
 
-  "raw_retention_hours": 1,
-  "raw_clean_interval": 30,
+  "raw_retention_minutes": 60,
   "categories": [
     "happy",
     "neutral",

@@ -18,8 +18,7 @@ class PluginConfig(BaseModel):
     maintenance_interval: int = Field(default=10, description="后台维护任务的执行周期")
     steal_emoji: bool = Field(default=True, description="是否开启表情包偷取和清理功能")
     content_filtration: bool = Field(default=False, description="是否开启内容审核")
-    raw_retention_hours: int = Field(default=24, description="raw目录图片保留期限")
-    raw_clean_interval: int = Field(default=3600, description="raw目录清理时间间隔")
+    raw_retention_minutes: int = Field(default=60, description="raw目录图片保留期限")
     categories: list[str] = Field(
         default_factory=lambda: [
             "happy",
@@ -247,8 +246,7 @@ class ConfigService:
         self.steal_emoji = True  # 控制偷取和扫描功能的开关
         self.content_filtration = True
         self.vision_provider_id = None
-        self.raw_retention_hours = 1  # raw目录图片保留期限
-        self.raw_clean_interval = 1800  # raw目录清理时间间隔（秒）
+        self.raw_retention_minutes = 60  # raw目录图片保留期限
         self.categories = [
             "happy",
             "sad",
@@ -299,8 +297,7 @@ class ConfigService:
         )  # 控制偷取和扫描功能的开关
         self.content_filtration = self.config_manager.get("content_filtration")
         self.vision_provider_id = self.config_manager.get("vision_provider_id")
-        self.raw_retention_hours = self.config_manager.get("raw_retention_hours")
-        self.raw_clean_interval = self.config_manager.get("raw_clean_interval")
+        self.raw_retention_minutes = self.config_manager.get("raw_retention_minutes")
 
         # 处理分类配置
         categories_config = self.config_manager.get("categories")

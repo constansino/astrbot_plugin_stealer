@@ -181,14 +181,14 @@ class CommandHandler:
         try:
             # 加载图片索引
             image_index = await self.plugin._load_index()
-            
+
             # 执行容量控制
             await self.plugin._enforce_capacity(image_index)
             await self.plugin._save_index(image_index)
-            
+
             # 执行raw目录清理
             await self.plugin._clean_raw_directory()
-            
+
             return event.plain_result("手动清理完成")
         except Exception as e:
             logger.error(f"手动清理失败: {e}")

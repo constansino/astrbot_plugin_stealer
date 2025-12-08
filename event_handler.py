@@ -1,6 +1,5 @@
 import asyncio
 import os
-import random
 import time
 
 from astrbot.api import logger
@@ -8,7 +7,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.event.filter import (
     on_decorating_result,
 )
-from astrbot.api.message_components import Image, Plain
+from astrbot.api.message_components import Image
 
 
 class EventHandler:
@@ -81,120 +80,14 @@ class EventHandler:
         """发送消息前的处理：根据文本内容匹配并添加表情包。"""
         if not self.plugin.auto_send or not self.plugin.base_dir:
             return
+
         result = event.get_result()
-        # 只在有文本结果时尝试匹配表情包
         if result is None:
+            logger.debug("没有可处理的结果对象，未触发图片发送")
             return
 
-        # 检查result是否具有必要的属性
-        if not hasattr(result, "chain") or not hasattr(result, "get_plain_text"):
-            logger.error("before_send: 结果对象缺少必要属性，无法处理")
-            return
-
-        # 文本仅用于本地规则提取情绪关键字，不再请求额外的 LLM
-        text: str = result.get_plain_text() or event.get_message_str() or ""
-        if not text.strip():
-            logger.debug("没有可处理的文本内容，未触发图片发送")
-            return
-
-        emotions, cleaned_text = await self.plugin._extract_emotions_from_text(
-            event, text
-        )
-
-        # 先执行标签清理，无论是否发送表情包都需要清理标签
-        if cleaned_text != text:
-            # 创建新的结果对象并更新内容
-            new_result = event.make_result().set_result_content_type(
-                result.result_content_type
-            )
-
-            # 添加除了Plain文本外的其他组件
-            for comp in result.chain:
-                if not isinstance(comp, Plain):
-                    new_result.chain.append(comp)
-
-            # 添加清除标签后的文本
-            if cleaned_text.strip():
-                new_result.message(cleaned_text.strip())
-
-            # 设置新的结果对象
-            event.set_result(new_result)
-
-            # 更新result和text变量，使用清理后的结果
-            result = new_result
-            text = cleaned_text
-
-        # 如果没有情绪标签，不需要继续处理图片发送
-        if not emotions:
-            logger.debug("未从文本中提取到情绪关键词，未触发图片发送")
-            return
-
-        # 只有在有情绪标签时才检查发送概率
-        try:
-            chance = float(self.plugin.emoji_chance)
-            # 兜底保护，防止配置错误导致永远/从不触发
-            if chance <= 0:
-                logger.debug("表情包自动发送概率为0，未触发图片发送")
-                return
-            if chance > 1:
-                chance = 1.0
-            if random.random() >= chance:
-                logger.debug(f"表情包自动发送概率检查未通过 ({chance}), 未触发图片发送")
-                return
-        except (ValueError, TypeError) as e:
-            logger.error(f"解析表情包自动发送概率配置失败: {e}，未触发图片发送")
-            return
-
-        logger.debug("表情包自动发送概率检查通过，开始处理图片发送")
-
-        logger.debug(f"提取到情绪关键词: {emotions}")
-
-        # 目前只取第一个识别到的情绪类别
-        category = emotions[0]
-        if self.plugin.base_dir:
-            cat_dir = self.plugin.base_dir / "categories" / category
-        if not cat_dir.exists():
-            logger.debug(f"情绪'{category}'对应的图片目录不存在，未触发图片发送")
-            return
-
-        try:
-            files = [p for p in cat_dir.iterdir() if p.is_file()]
-            if not files:
-                logger.debug(f"情绪'{category}'对应的图片目录为空，未触发图片发送")
-                return
-
-            logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片")
-            pick = random.choice(files)
-            idx = await self.plugin._load_index()
-            rec = idx.get(pick.as_posix())
-            if isinstance(rec, dict):
-                rec["usage_count"] = int(rec.get("usage_count", 0)) + 1
-                rec["last_used"] = int(asyncio.get_event_loop().time())
-                idx[pick.as_posix()] = rec
-                await self.plugin._save_index(idx)
-        except (FileNotFoundError, PermissionError) as e:
-            logger.error(f"访问情绪图片目录失败: {e}", exc_info=True)
-            return
-        # 创建新的结果对象并更新内容
-        new_result = event.make_result().set_result_content_type(
-            result.result_content_type
-        )
-
-        # 添加除了Plain文本外的其他组件
-        for comp in result.chain:
-            if not isinstance(comp, Plain):
-                new_result.chain.append(comp)
-
-        # 添加清除标签后的文本
-        if cleaned_text.strip():
-            new_result.message(cleaned_text.strip())
-
-        # 添加图片
-        b64 = await self.plugin.image_processor_service._file_to_base64(pick.as_posix())
-        new_result.base64_image(b64)
-
-        # 设置新的结果对象
-        event.set_result(new_result)
+        # 使用插件实例中的公共方法处理表情包发送逻辑
+        await self.plugin._prepare_emoji_response(event, result)
 
     async def _scanner_loop(self):
         """扫描循环，处理定期维护任务。"""
@@ -233,9 +126,9 @@ class EventHandler:
         """按时间定时清理raw目录中的原始图片。"""
         try:
             # 设置清理期限：保留配置指定时间内的文件，超过则删除
-            retention_hours = int(self.plugin.raw_retention_hours)
+            retention_minutes = int(self.plugin.raw_retention_minutes)
             current_time = time.time()
-            cutoff_time = current_time - (retention_hours * 3600)
+            cutoff_time = current_time - (retention_minutes * 60)
 
             total_deleted = 0
 
@@ -244,7 +137,7 @@ class EventHandler:
                 raw_dir = self.plugin.base_dir / "raw"
             if raw_dir.exists():
                 logger.debug(
-                    f"开始清理raw目录: {raw_dir}, 保留期限: {retention_hours}小时, 当前时间: {current_time}, 截止时间: {cutoff_time}"
+                    f"开始清理raw目录: {raw_dir}, 保留期限: {retention_minutes}分钟, 当前时间: {current_time}, 截止时间: {cutoff_time}"
                 )
 
                 # 获取raw目录中的所有文件
