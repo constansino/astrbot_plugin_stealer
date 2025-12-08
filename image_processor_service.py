@@ -19,7 +19,6 @@ class ImageProcessorService:
     # 有效分类集合作为类常量
     VALID_CATEGORIES = {
         "happy",
-        "neutral",
         "sad",
         "angry",
         "shy",
@@ -28,6 +27,11 @@ class ImageProcessorService:
         "cry",
         "confused",
         "embarrassed",
+        "love",
+        "disgust",
+        "fear",
+        "excitement",
+        "tired",
         "sigh",
         "speechless",
     }
@@ -86,6 +90,7 @@ class ImageProcessorService:
 - **普通摄影**：风景照、无明显情绪导向的普通自拍、证件照。 
 - **信息截屏**：纯粹的软件界面截图、文档截图、电商商品图。 
 - **复杂插画**：用于展示艺术而非沟通的高清壁纸/艺术画作。 
+- **人物语录**：只是群友的发言记录截图，不包含任何表情或动作，通常为头像后面跟着文字。 
 - **注意**：如果无法确认其具有社交沟通功能，一律判定为“非表情包”。 
 
 --- 
@@ -100,9 +105,10 @@ class ImageProcessorService:
    - 必须从列表 `{emotion_list}` 中选择唯一标签。 
    - 映射指南： 
      - 尴尬、汗颜、无语、翻白眼 -> 归类为 `speechless` 
-     - 嘲讽、阴阳怪气、不屑 -> 归类为 `surprised` 或 `angry` (视攻击性而定，若无合适选项选最接近的负面情绪) 
+     - 面部红温、愤怒、不满 -> 归类为 `angry` (视攻击性而定，若无合适选项选最接近的负面情绪) 
      - 期待、星星眼、点赞 -> 归类为 `happy` 
      - 疑惑、黑人问号、挠头 -> 归类为 `confused` 
+     - 张大嘴巴，抱着头不一定是高兴，大概是表示惊呆了 -> 归类为 `surprised` 
 
 **[强制约束]**： 
 - 即使图片情绪复杂，也必须强制归类到 `{emotion_list}` 中最接近的一项，严禁输出空值。 
@@ -154,10 +160,11 @@ class ImageProcessorService:
    3. **模糊匹配原则**： 
       - 必须从列表 `{emotion_list}` 中选择唯一标签。 
       - 映射指南： 
-        - 尴尬、汗颜、无语、翻白眼 -> 归类为 `speechless` 
-        - 嘲讽、阴阳怪气、不屑 -> 归类为 `surprised` 或 `angry` (视攻击性而定，若无合适选项选最接近的负面情绪) 
-        - 期待、星星眼、点赞 -> 归类为 `happy` 
-        - 疑惑、黑人问号、挠头 -> 归类为 `confused` 
+        - 尴尬、汗颜、无语、翻白眼 -> 归类为 `speechless` (仅用于非常明显的无语情绪，谨慎使用)
+        - 嘲讽、阴阳怪气、不屑 -> 归类为 `surprised` 或 `angry` (视攻击性而定，若无合适选项选最接近的负面情绪)
+        - 期待、星星眼、点赞 -> 归类为 `happy`
+        - 疑惑、黑人问号、挠头 -> 归类为 `confused`
+        - 其他不确定的情绪 -> 优先考虑 `sigh` (叹气/无奈) 
 
    **[强制约束]**： 
    - 即使图片情绪复杂，也必须强制归类到 `{emotion_list}` 中最接近的一项，严禁输出空值。 
@@ -424,23 +431,24 @@ class ImageProcessorService:
             PILImage = None
 
         if PILImage is None:
-            return True  # 没有PIL时默认通过
+            return False  # 没有PIL时默认不通过，避免处理过多非表情包
 
         try:
             with PILImage.open(file_path) as img:
                 width, height = img.size
                 # 检查图片尺寸是否符合表情包特征
+                # 表情包通常是中等大小，太小或太大都不太可能
                 if (
-                    max(width, height) > 2000 or min(width, height) < 20
-                ):  # 降低最小尺寸限制从50到20
+                    max(width, height) > 1000 or min(width, height) < 50
+                ):  # 提高最小尺寸限制到50，降低最大尺寸到1000
                     return False
-                # 检查图片宽高比
+                # 检查图片宽高比，表情包通常接近正方形
                 aspect_ratio = max(width, height) / min(width, height)
-                if aspect_ratio > 5:
+                if aspect_ratio > 3:  # 提高宽高比限制到3，更严格筛选
                     return False
                 return True
         except Exception:
-            return True
+            return False  # 异常时默认不通过，避免处理损坏的图片
 
     async def classify_image(
         self,
@@ -553,8 +561,8 @@ class ImageProcessorService:
                         break
                 else:
                     # 根据提示词优化，VLM应该总是返回有效分类，这里作为最后的兜底
-                    logger.debug(f"无法从响应中提取有效分类，使用neutral作为兜底: {response}")
-                    category = "neutral"
+                    logger.debug(f"无法从响应中提取有效分类，使用sigh作为兜底: {response}")
+                    category = "sigh"
 
                 # 如果不是表情包，返回特定标识
                 if is_emoji_result.lower() != "是":
