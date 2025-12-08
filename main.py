@@ -505,25 +505,7 @@ class StealerPlugin(Star):
 
         return parentheses_count > 0 or bracket_count > 0
 
-    async def _classify_text_category(
-        self, event: AstrMessageEvent | None, text: str
-    ) -> str:
-        """调用文本模型判断文本情绪并映射到插件分类。"""
-        try:
-            # 委托给EmotionAnalyzerService类进行文本情绪分类
-            result = await self.emotion_analyzer_service.classify_text_emotion(
-                event, text
-            )
-            return result
-        except ValueError as e:
-            logger.error(f"文本分类参数错误: {e}")
-            return ""
-        except TypeError as e:
-            logger.error(f"文本分类类型错误: {e}")
-            return ""
-        except Exception as e:
-            logger.error(f"文本情绪分类失败: {e}", exc_info=True)
-            return ""
+
 
     async def _extract_emotions_from_text(
         self, event: AstrMessageEvent | None, text: str
@@ -675,8 +657,9 @@ class StealerPlugin(Star):
         await self.event_handler._enforce_capacity(idx)
 
     @filter.on_decorating_result()
-    async def _prepare_emoji_response(self, event: AstrMessageEvent, result):
+    async def _prepare_emoji_response(self, event: AstrMessageEvent):
         """准备表情包响应的公共逻辑。"""
+        result = event.get_result()
         if not result or not hasattr(result, "chain") or not hasattr(result, "get_plain_text"):
             return False
 
@@ -784,36 +767,27 @@ class StealerPlugin(Star):
             logger.error(f"访问情绪图片目录失败: {e}", exc_info=True)
             return text_updated
 
-    async def before_send(self, event: AstrMessageEvent, *args, **kwargs):
-        """发送消息前的处理：根据文本内容匹配并添加表情包。"""
-        if not self.auto_send or not self.base_dir:
-            return
-        result = event.get_result()
-        # 只在有文本结果时尝试匹配表情包
-        if result is None:
-            return
 
-        await self._prepare_emoji_response(event, result)
 
     @filter.command("meme on")
     async def meme_on(self, event: AstrMessageEvent):
         """开启偷表情包功能。"""
-        return await self.command_handler.meme_on(event)
+        yield await self.command_handler.meme_on(event)
 
     @filter.command("meme off")
     async def meme_off(self, event: AstrMessageEvent):
         """关闭偷表情包功能。"""
-        return await self.command_handler.meme_off(event)
+        yield await self.command_handler.meme_off(event)
 
     @filter.command("meme auto_on")
     async def auto_on(self, event: AstrMessageEvent):
         """开启自动发送功能。"""
-        return await self.command_handler.auto_on(event)
+        yield await self.command_handler.auto_on(event)
 
     @filter.command("meme auto_off")
     async def auto_off(self, event: AstrMessageEvent):
         """关闭自动发送功能。"""
-        return await self.command_handler.auto_off(event)
+        yield await self.command_handler.auto_off(event)
 
     @filter.command("meme set_vision")
     async def set_vision(self, event: AstrMessageEvent, provider_id: str = ""):
@@ -845,7 +819,7 @@ class StealerPlugin(Star):
     @filter.command("meme clean")
     async def clean(self, event: AstrMessageEvent):
         """手动清理过期的原始图片文件。"""
-        return await self.command_handler.clean(event)
+        yield await self.command_handler.clean(event)
 
     async def get_count(self) -> int:
         idx = await self._load_index()
@@ -969,11 +943,12 @@ class StealerPlugin(Star):
     @filter.command("meme push")
     async def push(self, event: AstrMessageEvent, category: str = "", alias: str = ""):
         if not self.base_dir:
+            yield event.plain_result("插件未正确配置，缺少图片存储目录")
             return
         if alias:
             aliases = await self._load_aliases()
             if alias in aliases:
-                aliases[alias]
+                category = aliases[alias]
             else:
                 yield event.plain_result("别名不存在")
                 return

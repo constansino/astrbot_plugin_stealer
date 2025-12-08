@@ -10,7 +10,7 @@ class CacheService:
     """缓存服务类，负责管理各种类型的缓存。"""
 
     # 缓存最大大小
-    _CACHE_MAX_SIZE = 1000
+    _CACHE_MAX_SIZE = 100
 
     def __init__(self, cache_dir: str | Path = None):
         """初始化缓存服务。
@@ -21,7 +21,7 @@ class CacheService:
         if not cache_dir:
             from astrbot.core.star.star_tools import StarTools
 
-            cache_dir = Path(StarTools.get_data_dir()) / "cache"
+            cache_dir = Path(StarTools.get_data_dir("astrbot_plugin_stealer")) / "cache"
 
         self._cache_dir = Path(cache_dir)
         try:

@@ -41,6 +41,8 @@ class ImageProcessorService:
             plugin_instance: StealerPlugin 实例，用于访问插件的配置和服务
         """
         self.plugin = plugin_instance
+        # 从插件实例获取PILImage引用，避免重复导入逻辑
+        self.PILImage = getattr(plugin_instance, "PILImage", None)
         # 确保base_dir始终是字符串
         if (
             hasattr(plugin_instance, "base_dir")
@@ -440,16 +442,12 @@ class ImageProcessorService:
         Returns:
             是否可能是表情包
         """
-        try:
-            from PIL import Image as PILImage
-        except ImportError:
-            PILImage = None
-
-        if PILImage is None:
+        # 使用从插件实例获取的PILImage引用，避免重复导入
+        if self.PILImage is None:
             return False  # 没有PIL时默认不通过，避免处理过多非表情包
 
         try:
-            with PILImage.open(file_path) as img:
+            with self.PILImage.open(file_path) as img:
                 width, height = img.size
                 # 检查图片尺寸是否符合表情包特征
                 # 表情包通常是中等大小，太小或太大都不太可能

@@ -4,9 +4,6 @@ import time
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.event.filter import (
-    on_decorating_result,
-)
 from astrbot.api.message_components import Image
 
 
@@ -75,19 +72,7 @@ class EventHandler:
             except Exception as e:
                 logger.error(f"处理图片失败: {e}", exc_info=True)
 
-    @on_decorating_result()
-    async def before_send(self, event: AstrMessageEvent, *args, **kwargs):
-        """发送消息前的处理：根据文本内容匹配并添加表情包。"""
-        if not self.plugin.auto_send or not self.plugin.base_dir:
-            return
 
-        result = event.get_result()
-        if result is None:
-            logger.debug("没有可处理的结果对象，未触发图片发送")
-            return
-
-        # 使用插件实例中的公共方法处理表情包发送逻辑
-        await self.plugin._prepare_emoji_response(event, result)
 
     async def _scanner_loop(self):
         """扫描循环，处理定期维护任务。"""

@@ -35,16 +35,7 @@ class EmotionAnalyzerService:
         # 不进行兜底分类，返回空字符串表示无法分类
         return ""
 
-    async def classify_text_emotion(self, event: AstrMessageEvent, text: str) -> str:
-        """调用文本模型判断文本情绪并映射到插件分类。"""
-        try:
-            # LLM已经通过提示词限制了输出标签格式，不再需要本地规则匹配
-            # 直接返回默认值
-            return ""
-        except Exception as e:
-            logger.error(f"文本情绪分类失败: {e}")
-            # 不进行兜底分类，返回空字符串表示无法分类
-            return ""
+
 
     async def extract_emotions_from_text(
         self, event: AstrMessageEvent | None, text: str
