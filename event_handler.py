@@ -151,39 +151,6 @@ class EventHandler:
             except Exception as e:
                 logger.error(f"处理图片失败: {e}", exc_info=True)
 
-    async def _scanner_loop(self):
-        """扫描循环，处理定期维护任务。"""
-        while True:
-            try:
-                await asyncio.sleep(max(1, int(self.plugin.maintenance_interval)) * 60)
-
-                # 只有当偷图功能开启时，才执行容量清理和raw目录清理
-                if self.plugin.steal_emoji:
-                    # 执行容量清理
-                    image_index = await self.plugin._load_index()
-                    await self._enforce_capacity(image_index)
-                    await self.plugin._save_index(image_index)
-
-                    # 执行raw目录清理（直接检查并清理过期文件）
-                    await self._clean_raw_directory()
-
-            except (FileNotFoundError, PermissionError) as e:
-                logger.error(f"扫描循环文件操作错误: {e}")
-                # 对于文件操作错误，继续循环
-                continue
-            except asyncio.TimeoutError as e:
-                logger.error(f"扫描循环超时错误: {e}")
-                # 超时错误也继续循环
-                continue
-            except ValueError as e:
-                logger.error(f"扫描循环值错误: {e}")
-                # 值错误继续循环
-                continue
-            except Exception as e:
-                logger.error(f"扫描循环发生未预期错误: {e}", exc_info=True)
-                # 记录详细异常信息，便于调试
-                continue
-
     async def _clean_raw_directory(self):
         """按时间定时清理raw目录中的原始图片。"""
         try:

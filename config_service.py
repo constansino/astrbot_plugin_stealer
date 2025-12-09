@@ -15,7 +15,18 @@ class PluginConfig(BaseModel):
     emoji_chance: float = Field(default=0.4, description="触发表情动作的基础概率")
     max_reg_num: int = Field(default=100, description="允许注册的最大表情数量")
     do_replace: bool = Field(default=True, description="达到上限时是否替换旧表情")
-    maintenance_interval: int = Field(default=10, description="后台维护任务的执行周期")
+    raw_cleanup_interval: int = Field(
+        default=30, description="raw目录清理任务的执行周期"
+    )
+    capacity_control_interval: int = Field(
+        default=60, description="容量控制任务的执行周期"
+    )
+    enable_raw_cleanup: bool = Field(
+        default=True, description="是否启用raw目录自动清理"
+    )
+    enable_capacity_control: bool = Field(
+        default=True, description="是否启用容量自动控制"
+    )
     steal_emoji: bool = Field(default=True, description="是否开启表情包偷取和清理功能")
     content_filtration: bool = Field(default=False, description="是否开启内容审核")
     raw_retention_minutes: int = Field(default=60, description="raw目录图片保留期限")
@@ -254,7 +265,10 @@ class ConfigService:
         self.emoji_chance = 0.3
         self.max_reg_num = 500
         self.do_replace = True
-        self.maintenance_interval = 30
+        self.raw_cleanup_interval = 30
+        self.capacity_control_interval = 60
+        self.enable_raw_cleanup = True
+        self.enable_capacity_control = True
         self.steal_emoji = True  # 控制偷取和扫描功能的开关
         self.content_filtration = True
         self.vision_provider_id = None
@@ -310,7 +324,14 @@ class ConfigService:
         self.emoji_chance = self.config_manager.get("emoji_chance")
         self.max_reg_num = self.config_manager.get("max_reg_num")
         self.do_replace = self.config_manager.get("do_replace")
-        self.maintenance_interval = self.config_manager.get("maintenance_interval")
+        self.raw_cleanup_interval = self.config_manager.get("raw_cleanup_interval")
+        self.capacity_control_interval = self.config_manager.get(
+            "capacity_control_interval"
+        )
+        self.enable_raw_cleanup = self.config_manager.get("enable_raw_cleanup")
+        self.enable_capacity_control = self.config_manager.get(
+            "enable_capacity_control"
+        )
         self.steal_emoji = self.config_manager.get(
             "steal_emoji"
         )  # 控制偷取和扫描功能的开关

@@ -26,10 +26,25 @@
     "type": "bool",
     "default": true
   },
-  "maintenance_interval": {
-    "description": "后台维护任务的执行周期（分钟），包括容量控制和文件清理",
+  "raw_cleanup_interval": {
+    "description": "raw目录清理任务的执行周期（分钟）",
     "type": "int",
-    "default": 10
+    "default": 30
+  },
+  "capacity_control_interval": {
+    "description": "容量控制任务的执行周期（分钟）",
+    "type": "int",
+    "default": 60
+  },
+  "enable_raw_cleanup": {
+    "description": "是否启用raw目录自动清理",
+    "type": "bool",
+    "default": true
+  },
+  "enable_capacity_control": {
+    "description": "是否启用容量自动控制",
+    "type": "bool",
+    "default": true
   },
   "steal_emoji": {
     "description": "是否开启表情包偷取和清理功能（关闭后将停止偷取新图片并暂停所有清理操作）",

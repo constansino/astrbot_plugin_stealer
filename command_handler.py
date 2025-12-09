@@ -208,6 +208,129 @@ class CommandHandler:
             logger.error(f"手动清理失败: {e}")
             yield event.plain_result(f"清理失败: {str(e)}")
 
+    async def task_status(self, event: AstrMessageEvent):
+        """显示后台任务状态。"""
+        status_text = "后台任务状态:\n\n"
+
+        # Raw清理任务
+        raw_cleanup_status = "启用" if self.plugin.enable_raw_cleanup else "禁用"
+        status_text += "📁 Raw目录清理:\n"
+        status_text += f"  状态: {raw_cleanup_status}\n"
+        status_text += f"  周期: {self.plugin.raw_cleanup_interval}分钟\n"
+        status_text += f"  保留期限: {self.plugin.raw_retention_minutes}分钟\n\n"
+
+        # 容量控制任务
+        capacity_status = "启用" if self.plugin.enable_capacity_control else "禁用"
+        status_text += "📊 容量控制:\n"
+        status_text += f"  状态: {capacity_status}\n"
+        status_text += f"  周期: {self.plugin.capacity_control_interval}分钟\n"
+        status_text += f"  上限: {self.plugin.max_reg_num}张\n"
+        status_text += f"  替换: {'是' if self.plugin.do_replace else '否'}\n\n"
+
+        # 任务运行状态
+        raw_task_running = self.plugin.task_scheduler.is_task_running(
+            "raw_cleanup_loop"
+        )
+        capacity_task_running = self.plugin.task_scheduler.is_task_running(
+            "capacity_control_loop"
+        )
+
+        status_text += "运行状态:\n"
+        status_text += f"  Raw清理任务: {'运行中' if raw_task_running else '已停止'}\n"
+        status_text += (
+            f"  容量控制任务: {'运行中' if capacity_task_running else '已停止'}"
+        )
+
+        yield event.plain_result(status_text)
+
+    async def toggle_raw_cleanup(self, event: AstrMessageEvent, action: str = ""):
+        """启用/禁用raw目录清理任务。"""
+        if action not in ["on", "off"]:
+            yield event.plain_result("用法: /meme raw_cleanup <on|off>")
+            return
+
+        if action == "on":
+            self.plugin.enable_raw_cleanup = True
+            # 如果任务未运行，启动它
+            if not self.plugin.task_scheduler.is_task_running("raw_cleanup_loop"):
+                self.plugin.task_scheduler.create_task(
+                    "raw_cleanup_loop", self.plugin._raw_cleanup_loop()
+                )
+            yield event.plain_result("已启用raw目录清理任务")
+        else:
+            self.plugin.enable_raw_cleanup = False
+            # 停止任务
+            self.plugin.task_scheduler.cancel_task("raw_cleanup_loop")
+            yield event.plain_result("已禁用raw目录清理任务")
+
+        self.plugin._persist_config()
+
+    async def toggle_capacity_control(self, event: AstrMessageEvent, action: str = ""):
+        """启用/禁用容量控制任务。"""
+        if action not in ["on", "off"]:
+            yield event.plain_result("用法: /meme capacity_control <on|off>")
+            return
+
+        if action == "on":
+            self.plugin.enable_capacity_control = True
+            # 如果任务未运行，启动它
+            if not self.plugin.task_scheduler.is_task_running("capacity_control_loop"):
+                self.plugin.task_scheduler.create_task(
+                    "capacity_control_loop", self.plugin._capacity_control_loop()
+                )
+            yield event.plain_result("已启用容量控制任务")
+        else:
+            self.plugin.enable_capacity_control = False
+            # 停止任务
+            self.plugin.task_scheduler.cancel_task("capacity_control_loop")
+            yield event.plain_result("已禁用容量控制任务")
+
+        self.plugin._persist_config()
+
+    async def set_raw_cleanup_interval(
+        self, event: AstrMessageEvent, interval: str = ""
+    ):
+        """设置raw清理周期。"""
+        if not interval:
+            yield event.plain_result(
+                "用法: /meme raw_cleanup_interval <分钟>\n例如: /meme raw_cleanup_interval 30"
+            )
+            return
+
+        try:
+            minutes = int(interval)
+            if minutes < 1:
+                yield event.plain_result("清理周期必须至少为1分钟")
+                return
+
+            self.plugin.raw_cleanup_interval = minutes
+            self.plugin._persist_config()
+            yield event.plain_result(f"已设置raw清理周期为: {minutes}分钟")
+        except ValueError:
+            yield event.plain_result("无效的周期值，请输入正整数")
+
+    async def set_capacity_control_interval(
+        self, event: AstrMessageEvent, interval: str = ""
+    ):
+        """设置容量控制周期。"""
+        if not interval:
+            yield event.plain_result(
+                "用法: /meme capacity_interval <分钟>\n例如: /meme capacity_interval 60"
+            )
+            return
+
+        try:
+            minutes = int(interval)
+            if minutes < 1:
+                yield event.plain_result("控制周期必须至少为1分钟")
+                return
+
+            self.plugin.capacity_control_interval = minutes
+            self.plugin._persist_config()
+            yield event.plain_result(f"已设置容量控制周期为: {minutes}分钟")
+        except ValueError:
+            yield event.plain_result("无效的周期值，请输入正整数")
+
     async def throttle_status(self, event: AstrMessageEvent):
         """显示图片处理节流状态。"""
         mode = self.plugin.image_processing_mode

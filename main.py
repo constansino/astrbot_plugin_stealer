@@ -166,7 +166,10 @@ class StealerPlugin(Star):
         self.emoji_chance = self.config_service.emoji_chance
         self.max_reg_num = self.config_service.max_reg_num
         self.do_replace = self.config_service.do_replace
-        self.maintenance_interval = self.config_service.maintenance_interval
+        self.raw_cleanup_interval = self.config_service.raw_cleanup_interval
+        self.capacity_control_interval = self.config_service.capacity_control_interval
+        self.enable_raw_cleanup = self.config_service.enable_raw_cleanup
+        self.enable_capacity_control = self.config_service.enable_capacity_control
         self.steal_emoji = self.config_service.steal_emoji
         self.content_filtration = self.config_service.content_filtration
         self.raw_retention_minutes = self.config_service.raw_retention_minutes
@@ -193,8 +196,11 @@ class StealerPlugin(Star):
         if not (0 <= self.emoji_chance <= 1):
             errors.append("表情发送概率必须在0-1之间")
 
-        if self.maintenance_interval < 1:
-            errors.append("维护周期必须至少为1分钟")
+        if self.raw_cleanup_interval < 1:
+            errors.append("raw清理周期必须至少为1分钟")
+
+        if self.capacity_control_interval < 1:
+            errors.append("容量控制周期必须至少为1分钟")
 
         if self.raw_retention_minutes < 1:
             errors.append("raw目录保留期限必须至少为1分钟")
@@ -206,8 +212,10 @@ class StealerPlugin(Star):
                 self.max_reg_num = 100
             if not (0 <= self.emoji_chance <= 1):
                 self.emoji_chance = 0.4
-            if self.maintenance_interval < 1:
-                self.maintenance_interval = 10
+            if self.raw_cleanup_interval < 1:
+                self.raw_cleanup_interval = 30
+            if self.capacity_control_interval < 1:
+                self.capacity_control_interval = 60
             if self.raw_retention_minutes < 1:
                 self.raw_retention_minutes = 60
 
@@ -288,8 +296,24 @@ class StealerPlugin(Star):
             for category in self.categories:
                 (self.categories_dir / category).mkdir(parents=True, exist_ok=True)
 
-            # 启动扫描任务
-            self.task_scheduler.create_task("scanner_loop", self._scanner_loop())
+            # 启动独立的后台任务
+            # raw目录清理任务
+            if self.enable_raw_cleanup:
+                self.task_scheduler.create_task(
+                    "raw_cleanup_loop", self._raw_cleanup_loop()
+                )
+                logger.info(
+                    f"已启动raw目录清理任务，周期: {self.raw_cleanup_interval}分钟"
+                )
+
+            # 容量控制任务
+            if self.enable_capacity_control:
+                self.task_scheduler.create_task(
+                    "capacity_control_loop", self._capacity_control_loop()
+                )
+                logger.info(
+                    f"已启动容量控制任务，周期: {self.capacity_control_interval}分钟"
+                )
 
             # 加载并注入人格
             personas = self.context.provider_manager.personas
@@ -309,8 +333,9 @@ class StealerPlugin(Star):
             for persona, persona_backup in zip(personas, self.persona_backup):
                 persona["prompt"] = persona_backup["prompt"]
 
-            # 使用任务调度器停止扫描任务
-            self.task_scheduler.cancel_task("scanner_loop")
+            # 使用任务调度器停止所有后台任务
+            self.task_scheduler.cancel_task("raw_cleanup_loop")
+            self.task_scheduler.cancel_task("capacity_control_loop")
 
             # 清理各服务资源
             if hasattr(self, "cache_service") and self.cache_service:
@@ -696,10 +721,49 @@ class StealerPlugin(Star):
         # 委托给 EventHandler 类处理
         await self.event_handler.on_message(event, *args, **kwargs)
 
-    async def _scanner_loop(self):
-        """扫描循环：定期清理文件和执行维护任务。"""
-        # 委托给 EventHandler 类处理
-        await self.event_handler._scanner_loop()
+    async def _raw_cleanup_loop(self):
+        """raw目录清理循环任务。"""
+        while True:
+            try:
+                # 等待指定的清理周期
+                await asyncio.sleep(max(1, int(self.raw_cleanup_interval)) * 60)
+
+                # 只有当偷图功能开启且清理功能启用时才执行
+                if self.steal_emoji and self.enable_raw_cleanup:
+                    logger.info("开始执行raw目录清理任务")
+                    await self.event_handler._clean_raw_directory()
+                    logger.info("raw目录清理任务完成")
+
+            except asyncio.CancelledError:
+                logger.info("raw目录清理任务已取消")
+                break
+            except Exception as e:
+                logger.error(f"raw目录清理任务发生错误: {e}", exc_info=True)
+                # 发生错误后继续循环
+                continue
+
+    async def _capacity_control_loop(self):
+        """容量控制循环任务。"""
+        while True:
+            try:
+                # 等待指定的控制周期
+                await asyncio.sleep(max(1, int(self.capacity_control_interval)) * 60)
+
+                # 只有当偷图功能开启且容量控制启用时才执行
+                if self.steal_emoji and self.enable_capacity_control:
+                    logger.info("开始执行容量控制任务")
+                    image_index = await self._load_index()
+                    await self.event_handler._enforce_capacity(image_index)
+                    await self._save_index(image_index)
+                    logger.info("容量控制任务完成")
+
+            except asyncio.CancelledError:
+                logger.info("容量控制任务已取消")
+                break
+            except Exception as e:
+                logger.error(f"容量控制任务发生错误: {e}", exc_info=True)
+                # 发生错误后继续循环
+                continue
 
     # 已移除_scan_register_emoji_folder方法（扫描系统表情包目录功能，无实际用途）
 
@@ -872,9 +936,22 @@ class StealerPlugin(Star):
         idx = await self._load_index()
         # 添加视觉模型信息
         vision_model = self.vision_provider_id or "未设置（将使用当前会话默认模型）"
-        yield event.plain_result(
-            f"偷取: {st_on}\n自动发送: {st_auto}\n已注册数量: {len(idx)}\n概率: {self.emoji_chance}\n上限: {self.max_reg_num}\n替换: {self.do_replace}\n维护周期: {self.maintenance_interval}min\n审核: {self.content_filtration}\n视觉模型: {vision_model}"
-        )
+
+        status_text = "插件状态:\n"
+        status_text += f"偷取: {st_on}\n"
+        status_text += f"自动发送: {st_auto}\n"
+        status_text += f"已注册数量: {len(idx)}\n"
+        status_text += f"概率: {self.emoji_chance}\n"
+        status_text += f"上限: {self.max_reg_num}\n"
+        status_text += f"替换: {self.do_replace}\n"
+        status_text += f"审核: {self.content_filtration}\n"
+        status_text += f"视觉模型: {vision_model}\n\n"
+        status_text += "后台任务:\n"
+        status_text += f"Raw清理: {'启用' if self.enable_raw_cleanup else '禁用'} ({self.raw_cleanup_interval}min)\n"
+        status_text += f"容量控制: {'启用' if self.enable_capacity_control else '禁用'} ({self.capacity_control_interval}min)\n\n"
+        status_text += "使用 /meme task_status 查看详细任务状态"
+
+        yield event.plain_result(status_text)
 
     @filter.command("meme clean")
     async def clean(self, event: AstrMessageEvent):
@@ -907,6 +984,35 @@ class StealerPlugin(Star):
     async def set_throttle_cooldown(self, event: AstrMessageEvent, cooldown: str = ""):
         """设置冷却模式的冷却时间。"""
         yield await self.command_handler.set_throttle_cooldown(event, cooldown)
+
+    @filter.command("meme task_status")
+    async def task_status(self, event: AstrMessageEvent):
+        """显示后台任务状态。"""
+        yield await self.command_handler.task_status(event)
+
+    @filter.command("meme raw_cleanup")
+    async def toggle_raw_cleanup(self, event: AstrMessageEvent, action: str = ""):
+        """启用/禁用raw目录清理任务。"""
+        yield await self.command_handler.toggle_raw_cleanup(event, action)
+
+    @filter.command("meme capacity_control")
+    async def toggle_capacity_control(self, event: AstrMessageEvent, action: str = ""):
+        """启用/禁用容量控制任务。"""
+        yield await self.command_handler.toggle_capacity_control(event, action)
+
+    @filter.command("meme raw_cleanup_interval")
+    async def set_raw_cleanup_interval(
+        self, event: AstrMessageEvent, interval: str = ""
+    ):
+        """设置raw清理周期。"""
+        yield await self.command_handler.set_raw_cleanup_interval(event, interval)
+
+    @filter.command("meme capacity_interval")
+    async def set_capacity_control_interval(
+        self, event: AstrMessageEvent, interval: str = ""
+    ):
+        """设置容量控制周期。"""
+        yield await self.command_handler.set_capacity_control_interval(event, interval)
 
     async def get_count(self) -> int:
         idx = await self._load_index()
