@@ -812,3 +812,10 @@ class ImageProcessorService:
         except Exception as e:
             logger.error(f"存储图片失败: {e}")
             return src_path
+
+    def cleanup(self):
+        """清理资源。"""
+        # 清理图片缓存
+        if hasattr(self, '_image_cache'):
+            self._image_cache.clear()
+        logger.debug("ImageProcessorService 资源已清理")

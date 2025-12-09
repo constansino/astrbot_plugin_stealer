@@ -235,3 +235,12 @@ class EventHandler:
             logger.error(f"执行容量控制时系统错误: {e}")
         except Exception as e:
             logger.error(f"执行容量控制时发生未预期错误: {e}", exc_info=True)
+
+    def cleanup(self):
+        """清理资源。"""
+        # 取消扫描任务
+        if self._scanner_task and not self._scanner_task.done():
+            self._scanner_task.cancel()
+        # 清理插件引用
+        self.plugin = None
+        logger.debug("EventHandler 资源已清理")

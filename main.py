@@ -153,8 +153,39 @@ class StealerPlugin(Star):
         # 运行时属性
         self.backend_tag: str = self.BACKEND_TAG
         self._scanner_task: asyncio.Task | None = None
+        
+        # 验证配置
+        self._validate_config()
 
     # _clean_cache方法已迁移到CacheService类
+
+    def _validate_config(self):
+        """验证配置参数的有效性。"""
+        errors = []
+        
+        if self.max_reg_num <= 0:
+            errors.append("最大表情数量必须大于0")
+        
+        if not (0 <= self.emoji_chance <= 1):
+            errors.append("表情发送概率必须在0-1之间")
+        
+        if self.maintenance_interval < 1:
+            errors.append("维护周期必须至少为1分钟")
+        
+        if self.raw_retention_minutes < 1:
+            errors.append("raw目录保留期限必须至少为1分钟")
+            
+        if errors:
+            logger.warning(f"配置验证发现问题: {'; '.join(errors)}")
+            # 不抛出异常，而是使用默认值
+            if self.max_reg_num <= 0:
+                self.max_reg_num = 100
+            if not (0 <= self.emoji_chance <= 1):
+                self.emoji_chance = 0.4
+            if self.maintenance_interval < 1:
+                self.maintenance_interval = 10
+            if self.raw_retention_minutes < 1:
+                self.raw_retention_minutes = 60
 
     def _update_config_from_dict(self, config_dict: dict):
         """从配置字典更新插件配置。"""
@@ -297,9 +328,30 @@ class StealerPlugin(Star):
             self.task_scheduler.cancel_task("scanner_loop")
 
             # 清理各服务资源
-            self.cache_service.cleanup()
-            self.task_scheduler.cleanup()
-            self.config_service.cleanup()
+            if hasattr(self, 'cache_service') and self.cache_service:
+                self.cache_service.cleanup()
+            
+            if hasattr(self, 'task_scheduler') and self.task_scheduler:
+                self.task_scheduler.cleanup()
+            
+            if hasattr(self, 'config_service') and self.config_service:
+                self.config_service.cleanup()
+            
+            if hasattr(self, 'image_processor_service') and self.image_processor_service:
+                # ImageProcessorService没有cleanup方法，但可以清理缓存
+                if hasattr(self.image_processor_service, '_image_cache'):
+                    self.image_processor_service._image_cache.clear()
+            
+            if hasattr(self, 'emotion_analyzer_service') and self.emotion_analyzer_service:
+                self.emotion_analyzer_service.cleanup()
+            
+            if hasattr(self, 'command_handler') and self.command_handler:
+                # CommandHandler没有cleanup方法，清理引用即可
+                self.command_handler = None
+            
+            if hasattr(self, 'event_handler') and self.event_handler:
+                # EventHandler没有cleanup方法，清理引用即可
+                self.event_handler = None
 
         except Exception as e:
             logger.error(f"终止插件失败: {e}")
@@ -439,15 +491,18 @@ class StealerPlugin(Star):
             (成功与否, 更新后的索引字典)
         """
         try:
-            # 委托给ImageProcessorService类处理
-            success, updated_idx = await self.image_processor_service.process_image(
-                event=event,
-                file_path=file_path,
-                is_temp=is_temp,
-                idx=idx,
-                categories=self.categories,
-                content_filtration=self.content_filtration,
-                backend_tag=self.backend_tag,
+            # 添加超时控制，防止长时间阻塞
+            success, updated_idx = await asyncio.wait_for(
+                self.image_processor_service.process_image(
+                    event=event,
+                    file_path=file_path,
+                    is_temp=is_temp,
+                    idx=idx,
+                    categories=self.categories,
+                    content_filtration=self.content_filtration,
+                    backend_tag=self.backend_tag,
+                ),
+                timeout=60  # 60秒超时
             )
 
             # 如果没有提供索引，我们需要加载完整的索引
@@ -459,6 +514,11 @@ class StealerPlugin(Star):
                 return success, full_idx
 
             return success, updated_idx
+        except asyncio.TimeoutError:
+            logger.warning(f"图片处理超时: {file_path}")
+            if is_temp:
+                await self._safe_remove_file(file_path)
+            return False, idx
         except FileNotFoundError as e:
             logger.error(f"文件不存在错误: {e}")
         except PermissionError as e:

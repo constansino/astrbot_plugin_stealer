@@ -201,3 +201,9 @@ class CommandHandler:
         except Exception as e:
             logger.error(f"手动清理失败: {e}")
             yield event.plain_result(f"清理失败: {str(e)}")
+
+    def cleanup(self):
+        """清理资源。"""
+        # CommandHandler 主要是无状态的，清理插件引用即可
+        self.plugin = None
+        logger.debug("CommandHandler 资源已清理")
