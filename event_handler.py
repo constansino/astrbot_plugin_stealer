@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 import time
 
 from astrbot.api import logger
@@ -19,6 +20,73 @@ class EventHandler:
         self.plugin = plugin_instance
         self._scanner_task: asyncio.Task | None = None
 
+        # 图片处理节流相关
+        self._last_process_time = 0  # 上次处理时间（用于interval和cooldown模式）
+        self._process_count = 0  # 处理计数（用于interval模式）
+
+    def _should_process_image(self) -> bool:
+        """根据配置的节流模式判断是否应该处理图片。
+
+        Returns:
+            bool: 是否应该处理图片
+        """
+        import time
+
+        mode = self.plugin.image_processing_mode
+        current_time = time.time()
+
+        if mode == "always":
+            # 总是处理
+            return True
+
+        elif mode == "probability":
+            # 概率处理
+            probability = float(self.plugin.image_processing_probability)
+            should_process = random.random() < probability
+            if should_process:
+                logger.debug(f"概率模式：通过（概率={probability}）")
+            else:
+                logger.debug(f"概率模式：跳过（概率={probability}）")
+            return should_process
+
+        elif mode == "interval":
+            # 间隔处理：每N秒只处理一次
+            interval = int(self.plugin.image_processing_interval)
+            time_since_last = current_time - self._last_process_time
+
+            if time_since_last >= interval:
+                self._last_process_time = current_time
+                logger.debug(
+                    f"间隔模式：通过（间隔={interval}秒，距上次={time_since_last:.1f}秒）"
+                )
+                return True
+            else:
+                logger.debug(
+                    f"间隔模式：跳过（间隔={interval}秒，距上次={time_since_last:.1f}秒）"
+                )
+                return False
+
+        elif mode == "cooldown":
+            # 冷却模式：两次处理之间至少间隔N秒
+            cooldown = int(self.plugin.image_processing_cooldown)
+            time_since_last = current_time - self._last_process_time
+
+            if time_since_last >= cooldown:
+                self._last_process_time = current_time
+                logger.debug(
+                    f"冷却模式：通过（冷却={cooldown}秒，距上次={time_since_last:.1f}秒）"
+                )
+                return True
+            else:
+                logger.debug(
+                    f"冷却模式：跳过（冷却={cooldown}秒，距上次={time_since_last:.1f}秒）"
+                )
+                return False
+
+        # 默认不处理
+        logger.warning(f"未知的图片处理模式: {mode}，跳过处理")
+        return False
+
     # 注意：这个方法不需要装饰器，因为在StealerPlugin类中已经使用了装饰器
     # @event_message_type(EventMessageType.ALL)
     # @platform_adapter_type(PlatformAdapterType.ALL)
@@ -36,6 +104,17 @@ class EventHandler:
             for comp in message_event.message_obj.message
             if isinstance(comp, Image)
         ]
+
+        # 如果没有图片，直接返回
+        if not imgs:
+            return
+
+        # 检查是否应该处理图片（节流控制）
+        if not self._should_process_image():
+            logger.debug(f"跳过处理 {len(imgs)} 张图片（节流控制）")
+            return
+
+        logger.debug(f"开始处理 {len(imgs)} 张图片")
 
         for img in imgs:
             try:
@@ -71,8 +150,6 @@ class EventHandler:
                 logger.error(f"图片处理参数错误: {e}")
             except Exception as e:
                 logger.error(f"处理图片失败: {e}", exc_info=True)
-
-
 
     async def _scanner_loop(self):
         """扫描循环，处理定期维护任务。"""
@@ -187,8 +264,16 @@ class EventHandler:
                 return
             image_items = []
             for file_path, image_info in image_index.items():
-                usage_count = int(image_info.get("usage_count", 0)) if isinstance(image_info, dict) else 0
-                created_at = int(image_info.get("created_at", 0)) if isinstance(image_info, dict) else 0
+                usage_count = (
+                    int(image_info.get("usage_count", 0))
+                    if isinstance(image_info, dict)
+                    else 0
+                )
+                created_at = (
+                    int(image_info.get("created_at", 0))
+                    if isinstance(image_info, dict)
+                    else 0
+                )
                 image_items.append((file_path, usage_count, created_at))
             image_items.sort(key=lambda x: (x[1], x[2]))
 
@@ -206,7 +291,9 @@ class EventHandler:
 
                     # 删除categories目录中的对应副本
                     # 从索引中获取分类信息
-                    if remove_path in image_index and isinstance(image_index[remove_path], dict):
+                    if remove_path in image_index and isinstance(
+                        image_index[remove_path], dict
+                    ):
                         category = image_index[remove_path].get("category", "")
                         if category and self.plugin.base_dir:
                             file_name = os.path.basename(remove_path)
@@ -221,7 +308,8 @@ class EventHandler:
                     logger.error(f"删除文件时系统错误: {remove_path}, 错误: {e}")
                 except Exception as e:
                     logger.error(
-                        f"删除文件时发生未预期错误: {remove_path}, 错误: {e}", exc_info=True
+                        f"删除文件时发生未预期错误: {remove_path}, 错误: {e}",
+                        exc_info=True,
                     )
 
                 # 从索引中删除对应的条目

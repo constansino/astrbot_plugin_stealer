@@ -90,8 +90,10 @@ class CommandHandler:
 
         # 如果没有提供别名或别名不存在，使用分类参数
         # 如果分类参数也为空，则使用默认分类
-        target_category = target_category or category or (
-            self.plugin.categories[0] if self.plugin.categories else "happy"
+        target_category = (
+            target_category
+            or category
+            or (self.plugin.categories[0] if self.plugin.categories else "happy")
         )
 
         # 将目标分类赋值给cat变量，保持后续代码兼容性
@@ -112,7 +114,9 @@ class CommandHandler:
     async def debug_image(self, event: AstrMessageEvent):
         """调试命令：处理当前消息中的图片并显示详细信息。"""
         # 收集所有图片组件
-        image_components = [comp for comp in event.message_obj.message if isinstance(comp, Image)]
+        image_components = [
+            comp for comp in event.message_obj.message if isinstance(comp, Image)
+        ]
 
         if not image_components:
             yield event.plain_result("当前消息中没有图片")
@@ -171,7 +175,9 @@ class CommandHandler:
             if success and image_index:
                 for processed_file_path, image_info in image_index.items():
                     if isinstance(image_info, dict):
-                        result_message += f"分类: {image_info.get('category', '未知')}\n"
+                        result_message += (
+                            f"分类: {image_info.get('category', '未知')}\n"
+                        )
                         result_message += f"情绪: {image_info.get('emotion', '未知')}\n"
                         result_message += f"标签: {image_info.get('tags', [])}\n"
                         result_message += f"描述: {image_info.get('desc', '无')}\n"
@@ -201,6 +207,125 @@ class CommandHandler:
         except Exception as e:
             logger.error(f"手动清理失败: {e}")
             yield event.plain_result(f"清理失败: {str(e)}")
+
+    async def throttle_status(self, event: AstrMessageEvent):
+        """显示图片处理节流状态。"""
+        mode = self.plugin.image_processing_mode
+        mode_names = {
+            "always": "总是处理",
+            "probability": "概率处理",
+            "interval": "间隔处理",
+            "cooldown": "冷却处理",
+        }
+
+        status_text = "图片处理节流状态:\n"
+        status_text += f"当前模式: {mode_names.get(mode, mode)}\n"
+
+        if mode == "probability":
+            status_text += (
+                f"处理概率: {self.plugin.image_processing_probability * 100:.0f}%\n"
+            )
+        elif mode == "interval":
+            status_text += f"处理间隔: {self.plugin.image_processing_interval}秒\n"
+        elif mode == "cooldown":
+            status_text += f"冷却时间: {self.plugin.image_processing_cooldown}秒\n"
+
+        status_text += "\n说明:\n"
+        status_text += "- always: 每张图片都处理（消耗API最多）\n"
+        status_text += "- probability: 按概率随机处理\n"
+        status_text += "- interval: 每N秒只处理一次\n"
+        status_text += "- cooldown: 两次处理间隔至少N秒"
+
+        yield event.plain_result(status_text)
+
+    async def set_throttle_mode(self, event: AstrMessageEvent, mode: str = ""):
+        """设置图片处理节流模式。"""
+        valid_modes = ["always", "probability", "interval", "cooldown"]
+
+        if not mode or mode not in valid_modes:
+            yield event.plain_result(
+                f"用法: /meme throttle_mode <模式>\n"
+                f"可用模式: {', '.join(valid_modes)}\n"
+                f"- always: 总是处理\n"
+                f"- probability: 概率处理\n"
+                f"- interval: 间隔处理\n"
+                f"- cooldown: 冷却处理"
+            )
+            return
+
+        self.plugin.image_processing_mode = mode
+        self.plugin._persist_config()
+
+        mode_names = {
+            "always": "总是处理",
+            "probability": "概率处理",
+            "interval": "间隔处理",
+            "cooldown": "冷却处理",
+        }
+
+        yield event.plain_result(f"已设置图片处理模式为: {mode_names[mode]}")
+
+    async def set_throttle_probability(
+        self, event: AstrMessageEvent, probability: str = ""
+    ):
+        """设置概率模式的处理概率。"""
+        if not probability:
+            yield event.plain_result(
+                "用法: /meme throttle_probability <概率>\n概率范围: 0.0-1.0（例如 0.3 表示30%）"
+            )
+            return
+
+        try:
+            prob = float(probability)
+            if not (0.0 <= prob <= 1.0):
+                yield event.plain_result("概率必须在 0.0-1.0 之间")
+                return
+
+            self.plugin.image_processing_probability = prob
+            self.plugin._persist_config()
+            yield event.plain_result(f"已设置处理概率为: {prob * 100:.0f}%")
+        except ValueError:
+            yield event.plain_result("无效的概率值，请输入 0.0-1.0 之间的数字")
+
+    async def set_throttle_interval(self, event: AstrMessageEvent, interval: str = ""):
+        """设置间隔模式的处理间隔。"""
+        if not interval:
+            yield event.plain_result(
+                "用法: /meme throttle_interval <秒数>\n例如: /meme throttle_interval 60"
+            )
+            return
+
+        try:
+            seconds = int(interval)
+            if seconds < 1:
+                yield event.plain_result("间隔必须至少为1秒")
+                return
+
+            self.plugin.image_processing_interval = seconds
+            self.plugin._persist_config()
+            yield event.plain_result(f"已设置处理间隔为: {seconds}秒")
+        except ValueError:
+            yield event.plain_result("无效的间隔值，请输入正整数")
+
+    async def set_throttle_cooldown(self, event: AstrMessageEvent, cooldown: str = ""):
+        """设置冷却模式的冷却时间。"""
+        if not cooldown:
+            yield event.plain_result(
+                "用法: /meme throttle_cooldown <秒数>\n例如: /meme throttle_cooldown 30"
+            )
+            return
+
+        try:
+            seconds = int(cooldown)
+            if seconds < 1:
+                yield event.plain_result("冷却时间必须至少为1秒")
+                return
+
+            self.plugin.image_processing_cooldown = seconds
+            self.plugin._persist_config()
+            yield event.plain_result(f"已设置冷却时间为: {seconds}秒")
+        except ValueError:
+            yield event.plain_result("无效的冷却时间，请输入正整数")
 
     def cleanup(self):
         """清理资源。"""

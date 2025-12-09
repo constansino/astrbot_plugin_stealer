@@ -63,7 +63,8 @@ class ImageProcessorService:
         # 尝试从插件实例获取提示词配置，如果不存在则使用默认值
         # 表情包识别和分类的合并提示词（不包含内容过滤）
         self.emoji_classification_prompt = getattr(
-            plugin_instance, "EMOJI_CLASSIFICATION_PROMPT",
+            plugin_instance,
+            "EMOJI_CLASSIFICATION_PROMPT",
             """# Role
 你是一名资深的视觉符号学专家和互联网迷因（Meme/Emoji）分析师。通过分析图像的视觉特征、文字内容和文化语境，你能精准判断图片属性并解读其核心情绪。
 
@@ -125,7 +126,8 @@ class ImageProcessorService:
 
         # 内容过滤+表情包识别+分类的三合一合并提示词
         self.combined_analysis_prompt = getattr(
-            plugin_instance, "COMBINED_ANALYSIS_PROMPT",
+            plugin_instance,
+            "COMBINED_ANALYSIS_PROMPT",
             """你是一个专业的图片分析专家，特别擅长内容过滤和表情包识别分类。请按照以下要求进行分析：
 
 1. 内容过滤：请判断这张图片是否包含违反规定的内容。
@@ -184,8 +186,12 @@ class ImageProcessorService:
         self.vision_provider_id = ""
 
     def update_config(
-        self, categories=None, content_filtration=None, vision_provider_id=None,
-        emoji_classification_prompt=None, combined_analysis_prompt=None
+        self,
+        categories=None,
+        content_filtration=None,
+        vision_provider_id=None,
+        emoji_classification_prompt=None,
+        combined_analysis_prompt=None,
     ):
         """更新图片处理器配置。
 
@@ -598,7 +604,9 @@ class ImageProcessorService:
             if "未配置视觉模型" in str(e) or "vision_model" in str(e).lower():
                 logger.error("请检查插件配置，确保已正确设置视觉模型(vision_model)参数")
             elif "429" in str(e) or "RateLimit" in str(e):
-                logger.error("视觉模型请求被限流，请稍后再试或调整vision_max_retries和vision_retry_delay配置")
+                logger.error(
+                    "视觉模型请求被限流，请稍后再试或调整vision_max_retries和vision_retry_delay配置"
+                )
             elif "图片文件不存在" in str(e):
                 logger.error("图片文件不存在，可能是文件路径错误或文件已被删除")
             else:
@@ -607,7 +615,9 @@ class ImageProcessorService:
             # 根据测试要求，无法分类时返回空字符串
             return "", [], "", ""
 
-    async def _call_vision_model(self, event: AstrMessageEvent | None, img_path: str, prompt: str) -> str:
+    async def _call_vision_model(
+        self, event: AstrMessageEvent | None, img_path: str, prompt: str
+    ) -> str:
         """调用视觉模型的共享辅助方法。
 
         Args:
@@ -650,24 +660,36 @@ class ImageProcessorService:
                     if event:
                         if hasattr(event, "unified_msg_origin"):
                             umo = event.unified_msg_origin
-                            chat_provider_id = await self.plugin.context.get_current_chat_provider_id(umo=umo)
+                            chat_provider_id = (
+                                await self.plugin.context.get_current_chat_provider_id(
+                                    umo=umo
+                                )
+                            )
                             logger.debug(f"从事件获取的聊天模型ID: {chat_provider_id}")
 
                     # 获取配置的视觉模型 provider_id
-                    vision_provider_id = getattr(self.plugin.config_service, "vision_provider_id", None)
-                    
+                    vision_provider_id = getattr(
+                        self.plugin.config_service, "vision_provider_id", None
+                    )
+
                     # 如果配置了视觉模型，使用它；否则使用当前会话的 provider
                     if vision_provider_id:
                         chat_provider_id = vision_provider_id
-                        logger.debug(f"使用配置的视觉模型 provider_id: {chat_provider_id}")
+                        logger.debug(
+                            f"使用配置的视觉模型 provider_id: {chat_provider_id}"
+                        )
                     elif not chat_provider_id:
                         # 如果既没有配置视觉模型，也没有从事件获取到 provider，使用默认配置
-                        chat_provider_id = getattr(self.plugin, "default_chat_provider_id", None)
+                        chat_provider_id = getattr(
+                            self.plugin, "default_chat_provider_id", None
+                        )
                         logger.debug(f"使用默认聊天模型ID: {chat_provider_id}")
 
                     # 检查是否有可用的 provider
                     if not chat_provider_id:
-                        error_msg = "未配置视觉模型(vision_provider_id)，无法进行图片分析"
+                        error_msg = (
+                            "未配置视觉模型(vision_provider_id)，无法进行图片分析"
+                        )
                         logger.error(error_msg)
                         raise ValueError(error_msg)
 
@@ -689,15 +711,24 @@ class ImageProcessorService:
                         if hasattr(result, "result_chain") and result.result_chain:
                             # 优先从result_chain获取格式化文本
                             llm_response_text = result.result_chain.get_plain_text()
-                            logger.debug(f"从result_chain获取的响应文本: {llm_response_text}")
-                        elif hasattr(result, "completion_text") and result.completion_text:
+                            logger.debug(
+                                f"从result_chain获取的响应文本: {llm_response_text}"
+                            )
+                        elif (
+                            hasattr(result, "completion_text")
+                            and result.completion_text
+                        ):
                             # 其次从completion_text获取
                             llm_response_text = result.completion_text
-                            logger.debug(f"从completion_text获取的响应文本: {llm_response_text}")
+                            logger.debug(
+                                f"从completion_text获取的响应文本: {llm_response_text}"
+                            )
                         else:
                             # 最后使用字符串转换作为兜底
                             llm_response_text = str(result)
-                            logger.debug(f"使用字符串转换获取的响应文本: {llm_response_text}")
+                            logger.debug(
+                                f"使用字符串转换获取的响应文本: {llm_response_text}"
+                            )
 
                         logger.debug(f"最终处理的LLM响应: {llm_response_text}")
                         return llm_response_text.strip()
@@ -777,8 +808,6 @@ class ImageProcessorService:
             logger.error(f"文件转换为base64失败: {e}")
             return ""
 
-
-
     async def _store_image(self, src_path: str, category: str) -> str:
         """将图片存储到指定分类目录。
 
@@ -819,6 +848,6 @@ class ImageProcessorService:
     def cleanup(self):
         """清理资源。"""
         # 清理图片缓存
-        if hasattr(self, '_image_cache'):
+        if hasattr(self, "_image_cache"):
             self._image_cache.clear()
         logger.debug("ImageProcessorService 资源已清理")

@@ -47,6 +47,31 @@
     "description": "raw目录中图片的保留期限（分钟）",
     "type": "int",
     "default": 60
+  },
+
+  "image_processing_mode": {
+    "description": "图片处理模式：always(总是处理), probability(概率处理), interval(间隔处理), cooldown(冷却时间)",
+    "type": "string",
+    "default": "probability",
+    "enum": ["always", "probability", "interval", "cooldown"]
+  },
+
+  "image_processing_probability": {
+    "description": "概率模式下处理图片的概率（0.0-1.0）",
+    "type": "float",
+    "default": 0.3
+  },
+
+  "image_processing_interval": {
+    "description": "间隔模式下处理图片的间隔秒数",
+    "type": "int",
+    "default": 60
+  },
+
+  "image_processing_cooldown": {
+    "description": "冷却模式下两次处理之间的最小间隔秒数",
+    "type": "int",
+    "default": 30
   }
 
 }

@@ -15,7 +15,7 @@ from astrbot.api.event.filter import (
     PlatformAdapterType,
 )
 from astrbot.api.message_components import Image, Plain
-from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .cache_service import CacheService
@@ -36,13 +36,10 @@ try:
 except Exception:  # pragma: no cover - 仅作为兼容分支
     PILImage = None
 
+# 使用文档推荐的插件注册方式 - 需要在文件顶部导入
+from astrbot.api import AstrBotAPI
 
-@register(
-    "astrbot_plugin_stealer",
-    "nagatoquin33",
-    "自动偷取并分类表情包，在合适时机发送",
-    "1.0.0",
-)
+
 class StealerPlugin(Star):
     """表情包偷取与发送插件。
 
@@ -122,17 +119,8 @@ class StealerPlugin(Star):
         self.steal_emoji = self.config_service.steal_emoji
         self.content_filtration = self.config_service.content_filtration
 
-        self.vision_provider_id = (
-            str(self.config_service.get_config("vision_provider_id"))
-            if self.config_service.get_config("vision_provider_id")
-            else None
-        )
-        self.raw_retention_minutes = self.config_service.raw_retention_minutes
-
-
-
-        # 获取分类列表
-        self.categories = self.config_service.categories
+        # 同步所有配置
+        self._sync_all_config()
 
         # 创建必要的目录
         self.raw_dir.mkdir(parents=True, exist_ok=True)
@@ -153,28 +141,64 @@ class StealerPlugin(Star):
         # 运行时属性
         self.backend_tag: str = self.BACKEND_TAG
         self._scanner_task: asyncio.Task | None = None
-        
+
         # 验证配置
         self._validate_config()
 
     # _clean_cache方法已迁移到CacheService类
 
+    def _load_vision_provider_id(self) -> str | None:
+        """加载视觉模型提供商ID。
+
+        Returns:
+            str | None: 视觉模型提供商ID，如果未配置则返回None
+        """
+        provider_id = self.config_service.get_config("vision_provider_id")
+        return str(provider_id) if provider_id else None
+
+    def _sync_all_config(self) -> None:
+        """从配置服务同步所有配置到实例属性。
+
+        统一的配置同步方法，避免重复代码。
+        """
+        # 同步基础配置
+        self.auto_send = self.config_service.auto_send
+        self.emoji_chance = self.config_service.emoji_chance
+        self.max_reg_num = self.config_service.max_reg_num
+        self.do_replace = self.config_service.do_replace
+        self.maintenance_interval = self.config_service.maintenance_interval
+        self.steal_emoji = self.config_service.steal_emoji
+        self.content_filtration = self.config_service.content_filtration
+        self.raw_retention_minutes = self.config_service.raw_retention_minutes
+        self.categories = self.config_service.categories
+
+        # 同步图片处理节流配置
+        self.image_processing_mode = self.config_service.image_processing_mode
+        self.image_processing_probability = (
+            self.config_service.image_processing_probability
+        )
+        self.image_processing_interval = self.config_service.image_processing_interval
+        self.image_processing_cooldown = self.config_service.image_processing_cooldown
+
+        # 同步视觉模型配置
+        self.vision_provider_id = self._load_vision_provider_id()
+
     def _validate_config(self):
         """验证配置参数的有效性。"""
         errors = []
-        
+
         if self.max_reg_num <= 0:
             errors.append("最大表情数量必须大于0")
-        
+
         if not (0 <= self.emoji_chance <= 1):
             errors.append("表情发送概率必须在0-1之间")
-        
+
         if self.maintenance_interval < 1:
             errors.append("维护周期必须至少为1分钟")
-        
+
         if self.raw_retention_minutes < 1:
             errors.append("raw目录保留期限必须至少为1分钟")
-            
+
         if errors:
             logger.warning(f"配置验证发现问题: {'; '.join(errors)}")
             # 不抛出异常，而是使用默认值
@@ -197,42 +221,20 @@ class StealerPlugin(Star):
             if self.config_service:
                 self.config_service.update_config_from_dict(config_dict)
 
-                # 同步更新实例属性以保持兼容性
-                self.auto_send = self.config_service.get_config("auto_send")
-                self.emoji_chance = self.config_service.get_config("emoji_chance")
-                self.max_reg_num = self.config_service.get_config("max_reg_num")
-                self.do_replace = self.config_service.get_config("do_replace")
-                self.maintenance_interval = self.config_service.get_config(
-                    "maintenance_interval"
-                )
-                self.content_filtration = self.config_service.get_config(
-                    "content_filtration"
-                )
-                self.steal_emoji = self.config_service.get_config("steal_emoji")
-
-                self.vision_provider_id = (
-                    str(self.config_service.get_config("vision_provider_id"))
-                    if self.config_service.get_config("vision_provider_id")
-                    else None
-                )
-                self.raw_retention_minutes = self.config_service.get_config(
-                "raw_retention_minutes"
-                )
-
-
-
-                # 更新分类列表
-                self.categories = (
-                    self.config_service.get_config("categories") or self.CATEGORIES
-                )
+                # 统一同步所有配置
+                self._sync_all_config()
 
                 # 更新其他服务的配置
                 self.image_processor_service.update_config(
                     categories=self.categories,
                     content_filtration=self.content_filtration,
                     vision_provider_id=self.vision_provider_id,
-                    emoji_classification_prompt=getattr(self, "EMOJI_CLASSIFICATION_PROMPT", None),
-                    combined_analysis_prompt=getattr(self, "COMBINED_ANALYSIS_PROMPT", None),
+                    emoji_classification_prompt=getattr(
+                        self, "EMOJI_CLASSIFICATION_PROMPT", None
+                    ),
+                    combined_analysis_prompt=getattr(
+                        self, "COMBINED_ANALYSIS_PROMPT", None
+                    ),
                 )
 
                 self.emotion_analyzer_service.update_config(categories=self.categories)
@@ -267,37 +269,20 @@ class StealerPlugin(Star):
                             setattr(self, key, value)
                         # 更新图片处理器的提示词
                         self.image_processor_service.update_config(
-                            emoji_classification_prompt=prompts.get("EMOJI_CLASSIFICATION_PROMPT", None),
-                            combined_analysis_prompt=prompts.get("COMBINED_ANALYSIS_PROMPT", None),
+                            emoji_classification_prompt=prompts.get(
+                                "EMOJI_CLASSIFICATION_PROMPT", None
+                            ),
+                            combined_analysis_prompt=prompts.get(
+                                "COMBINED_ANALYSIS_PROMPT", None
+                            ),
                         )
                 else:
                     logger.warning(f"提示词文件不存在: {prompts_path}")
             except Exception as e:
                 logger.error(f"加载提示词文件失败: {e}")
 
-            # 加载配置
-            self.auto_send = self.config_service.get_config("auto_send")
-            self.emoji_chance = self.config_service.get_config("emoji_chance")
-            self.max_reg_num = self.config_service.get_config("max_reg_num")
-            self.do_replace = self.config_service.get_config("do_replace")
-            self.maintenance_interval = self.config_service.get_config(
-                "maintenance_interval"
-            )
-            self.content_filtration = self.config_service.get_config(
-                "content_filtration"
-            )
-
-            self.vision_provider_id = (
-                str(self.config_service.get_config("vision_provider_id"))
-                if self.config_service.get_config("vision_provider_id")
-                else None
-            )
-            self.raw_retention_minutes = self.config_service.get_config(
-                "raw_retention_minutes"
-            )
-            self.categories = (
-                self.config_service.get_config("categories") or self.CATEGORIES
-            )
+            # 统一同步所有配置
+            self._sync_all_config()
 
             # 初始化子目录
             for category in self.categories:
@@ -328,28 +313,34 @@ class StealerPlugin(Star):
             self.task_scheduler.cancel_task("scanner_loop")
 
             # 清理各服务资源
-            if hasattr(self, 'cache_service') and self.cache_service:
+            if hasattr(self, "cache_service") and self.cache_service:
                 self.cache_service.cleanup()
-            
-            if hasattr(self, 'task_scheduler') and self.task_scheduler:
+
+            if hasattr(self, "task_scheduler") and self.task_scheduler:
                 self.task_scheduler.cleanup()
-            
-            if hasattr(self, 'config_service') and self.config_service:
+
+            if hasattr(self, "config_service") and self.config_service:
                 self.config_service.cleanup()
-            
-            if hasattr(self, 'image_processor_service') and self.image_processor_service:
+
+            if (
+                hasattr(self, "image_processor_service")
+                and self.image_processor_service
+            ):
                 # ImageProcessorService没有cleanup方法，但可以清理缓存
-                if hasattr(self.image_processor_service, '_image_cache'):
+                if hasattr(self.image_processor_service, "_image_cache"):
                     self.image_processor_service._image_cache.clear()
-            
-            if hasattr(self, 'emotion_analyzer_service') and self.emotion_analyzer_service:
+
+            if (
+                hasattr(self, "emotion_analyzer_service")
+                and self.emotion_analyzer_service
+            ):
                 self.emotion_analyzer_service.cleanup()
-            
-            if hasattr(self, 'command_handler') and self.command_handler:
+
+            if hasattr(self, "command_handler") and self.command_handler:
                 # CommandHandler没有cleanup方法，清理引用即可
                 self.command_handler = None
-            
-            if hasattr(self, 'event_handler') and self.event_handler:
+
+            if hasattr(self, "event_handler") and self.event_handler:
                 # EventHandler没有cleanup方法，清理引用即可
                 self.event_handler = None
 
@@ -502,7 +493,7 @@ class StealerPlugin(Star):
                     content_filtration=self.content_filtration,
                     backend_tag=self.backend_tag,
                 ),
-                timeout=60  # 60秒超时
+                timeout=60,  # 60秒超时
             )
 
             # 如果没有提供索引，我们需要加载完整的索引
@@ -572,8 +563,6 @@ class StealerPlugin(Star):
                 bracket_count -= 1
 
         return parentheses_count > 0 or bracket_count > 0
-
-
 
     async def _extract_emotions_from_text(
         self, event: AstrMessageEvent | None, text: str
@@ -728,7 +717,11 @@ class StealerPlugin(Star):
     async def _prepare_emoji_response(self, event: AstrMessageEvent):
         """准备表情包响应的公共逻辑。"""
         result = event.get_result()
-        if not result or not hasattr(result, "chain") or not hasattr(result, "get_plain_text"):
+        if (
+            not result
+            or not hasattr(result, "chain")
+            or not hasattr(result, "get_plain_text")
+        ):
             return False
 
         # 文本仅用于本地规则提取情绪关键字，不再请求额外的 LLM
@@ -805,7 +798,9 @@ class StealerPlugin(Star):
             image_index = await self._load_index()
             image_record = image_index.get(picked_image.as_posix())
             if isinstance(image_record, dict):
-                image_record["usage_count"] = int(image_record.get("usage_count", 0)) + 1
+                image_record["usage_count"] = (
+                    int(image_record.get("usage_count", 0)) + 1
+                )
                 image_record["last_used"] = int(asyncio.get_event_loop().time())
                 image_index[picked_image.as_posix()] = image_record
                 await self._save_index(image_index)
@@ -825,7 +820,9 @@ class StealerPlugin(Star):
                 new_result.message(cleaned_text.strip())
 
             # 添加图片
-            b64 = await self.image_processor_service._file_to_base64(picked_image.as_posix())
+            b64 = await self.image_processor_service._file_to_base64(
+                picked_image.as_posix()
+            )
             new_result.base64_image(b64)
 
             # 设置新的结果对象
@@ -834,8 +831,6 @@ class StealerPlugin(Star):
         except (FileNotFoundError, PermissionError) as e:
             logger.error(f"访问情绪图片目录失败: {e}", exc_info=True)
             return text_updated
-
-
 
     @filter.command("meme on")
     async def meme_on(self, event: AstrMessageEvent):
@@ -868,8 +863,6 @@ class StealerPlugin(Star):
         self._persist_config()
         yield event.plain_result(f"已设置视觉模型: {provider_id}")
 
-
-
     @filter.command("meme status")
     async def status(self, event: AstrMessageEvent):
         """显示当前偷取状态与后台标识。"""
@@ -887,6 +880,33 @@ class StealerPlugin(Star):
     async def clean(self, event: AstrMessageEvent):
         """手动清理过期的原始图片文件。"""
         yield await self.command_handler.clean(event)
+
+    @filter.command("meme throttle_status")
+    async def throttle_status(self, event: AstrMessageEvent):
+        """显示图片处理节流状态。"""
+        yield await self.command_handler.throttle_status(event)
+
+    @filter.command("meme throttle_mode")
+    async def set_throttle_mode(self, event: AstrMessageEvent, mode: str = ""):
+        """设置图片处理节流模式。"""
+        yield await self.command_handler.set_throttle_mode(event, mode)
+
+    @filter.command("meme throttle_probability")
+    async def set_throttle_probability(
+        self, event: AstrMessageEvent, probability: str = ""
+    ):
+        """设置概率模式的处理概率。"""
+        yield await self.command_handler.set_throttle_probability(event, probability)
+
+    @filter.command("meme throttle_interval")
+    async def set_throttle_interval(self, event: AstrMessageEvent, interval: str = ""):
+        """设置间隔模式的处理间隔。"""
+        yield await self.command_handler.set_throttle_interval(event, interval)
+
+    @filter.command("meme throttle_cooldown")
+    async def set_throttle_cooldown(self, event: AstrMessageEvent, cooldown: str = ""):
+        """设置冷却模式的冷却时间。"""
+        yield await self.command_handler.set_throttle_cooldown(event, cooldown)
 
     async def get_count(self) -> int:
         idx = await self._load_index()
@@ -952,11 +972,16 @@ class StealerPlugin(Star):
         all_records = await self._load_all_records()
         candidates = []
         for image_path, record_dict in all_records:
-            record_emotion = str(record_dict.get("emotion", record_dict.get("category", "")))
+            record_emotion = str(
+                record_dict.get("emotion", record_dict.get("category", ""))
+            )
             record_tags = record_dict.get("tags", [])
             if emotion and (
                 emotion == record_emotion
-                or (isinstance(record_tags, list) and emotion in [str(tag) for tag in record_tags])
+                or (
+                    isinstance(record_tags, list)
+                    and emotion in [str(tag) for tag in record_tags]
+                )
             ):
                 candidates.append((image_path, record_dict))
         if not candidates:
@@ -1100,3 +1125,8 @@ class StealerPlugin(Star):
             except Exception as e:
                 yield event.plain_result(f"图片 {i + 1}: 处理出错: {str(e)}")
                 logger.error(f"调试图片处理失败: {e}", exc_info=True)
+
+
+# 使用文档推荐的插件注册方式
+astrbot_api = AstrBotAPI()
+astrbot_api.register_plugin(StealerPlugin)

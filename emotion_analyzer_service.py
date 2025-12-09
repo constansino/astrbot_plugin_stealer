@@ -35,8 +35,6 @@ class EmotionAnalyzerService:
         # 不进行兜底分类，返回空字符串表示无法分类
         return ""
 
-
-
     async def extract_emotions_from_text(
         self, event: AstrMessageEvent | None, text: str
     ) -> tuple[list[str], str]:

@@ -19,6 +19,19 @@ class PluginConfig(BaseModel):
     steal_emoji: bool = Field(default=True, description="是否开启表情包偷取和清理功能")
     content_filtration: bool = Field(default=False, description="是否开启内容审核")
     raw_retention_minutes: int = Field(default=60, description="raw目录图片保留期限")
+    image_processing_mode: str = Field(
+        default="probability",
+        description="图片处理模式：always/probability/interval/cooldown",
+    )
+    image_processing_probability: float = Field(
+        default=0.3, description="概率模式下处理图片的概率"
+    )
+    image_processing_interval: int = Field(
+        default=60, description="间隔模式下处理图片的间隔秒数"
+    )
+    image_processing_cooldown: int = Field(
+        default=30, description="冷却模式下两次处理之间的最小间隔秒数"
+    )
     categories: list[str] = Field(
         default_factory=lambda: [
             "happy",
@@ -36,7 +49,6 @@ class PluginConfig(BaseModel):
             "excitement",
             "tired",
             "sigh",  # 叹气分类
-
         ],
         description="分类列表",
     )
@@ -247,6 +259,13 @@ class ConfigService:
         self.content_filtration = True
         self.vision_provider_id = None
         self.raw_retention_minutes = 60  # raw目录图片保留期限
+
+        # 图片处理节流配置
+        self.image_processing_mode = "probability"
+        self.image_processing_probability = 0.3
+        self.image_processing_interval = 60
+        self.image_processing_cooldown = 30
+
         self.categories = [
             "happy",
             "sad",
@@ -299,6 +318,18 @@ class ConfigService:
         self.vision_provider_id = self.config_manager.get("vision_provider_id")
         self.raw_retention_minutes = self.config_manager.get("raw_retention_minutes")
 
+        # 加载图片处理节流配置
+        self.image_processing_mode = self.config_manager.get("image_processing_mode")
+        self.image_processing_probability = self.config_manager.get(
+            "image_processing_probability"
+        )
+        self.image_processing_interval = self.config_manager.get(
+            "image_processing_interval"
+        )
+        self.image_processing_cooldown = self.config_manager.get(
+            "image_processing_cooldown"
+        )
+
         # 处理分类配置
         categories_config = self.config_manager.get("categories")
         if categories_config and isinstance(categories_config, list):
@@ -348,11 +379,11 @@ class ConfigService:
         try:
             # 使用配置管理器更新配置
             success = self.config_manager.update_config(updates)
-            
+
             if success:
                 # 重新加载配置到实例属性
                 self._load_initial_config()
-            
+
             return success
         except Exception as e:
             logger.error(f"更新ConfigService配置失败: {e}")
