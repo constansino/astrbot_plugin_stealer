@@ -65,9 +65,18 @@ class CommandHandler:
         vision_model = (
             self.plugin.vision_provider_id or "未设置（将使用当前会话默认模型）"
         )
-        yield event.plain_result(
-            f"偷取: {stealing_status}\n自动发送: {auto_send_status}\n已注册数量: {len(image_index)}\n概率: {self.plugin.emoji_chance}\n上限: {self.plugin.max_reg_num}\n替换: {self.plugin.do_replace}\n维护周期: {self.plugin.maintenance_interval}min\n审核: {self.plugin.content_filtration}\n视觉模型: {vision_model}"
-        )
+        status_text = f"偷取: {stealing_status}\n"
+        status_text += f"自动发送: {auto_send_status}\n"
+        status_text += f"已注册数量: {len(image_index)}\n"
+        status_text += f"概率: {self.plugin.emoji_chance}\n"
+        status_text += f"上限: {self.plugin.max_reg_num}\n"
+        status_text += f"替换: {self.plugin.do_replace}\n"
+        status_text += f"审核: {self.plugin.content_filtration}\n"
+        status_text += f"视觉模型: {vision_model}\n\n"
+        status_text += "后台任务:\n"
+        status_text += f"Raw清理: {'启用' if self.plugin.enable_raw_cleanup else '禁用'} ({self.plugin.raw_cleanup_interval}min)\n"
+        status_text += f"容量控制: {'启用' if self.plugin.enable_capacity_control else '禁用'} ({self.plugin.capacity_control_interval}min)"
+        yield event.plain_result(status_text)
 
     async def push(self, event: AstrMessageEvent, category: str = "", alias: str = ""):
         """手动推送指定分类的表情包。支持使用分类名称或别名。"""

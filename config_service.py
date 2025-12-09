@@ -74,9 +74,16 @@ class PluginConfig(BaseModel):
             if "emoji_chance" in data:
                 data["emoji_chance"] = max(0.0, min(1.0, data["emoji_chance"]))
 
-            # 确保maintenance_interval大于0
-            if "maintenance_interval" in data and data["maintenance_interval"] <= 0:
-                data["maintenance_interval"] = 10
+            # 确保raw_cleanup_interval大于0
+            if "raw_cleanup_interval" in data and data["raw_cleanup_interval"] <= 0:
+                data["raw_cleanup_interval"] = 30
+
+            # 确保capacity_control_interval大于0
+            if (
+                "capacity_control_interval" in data
+                and data["capacity_control_interval"] <= 0
+            ):
+                data["capacity_control_interval"] = 60
 
             # 确保max_reg_num大于0
             if "max_reg_num" in data and data["max_reg_num"] <= 0:
@@ -453,7 +460,10 @@ class ConfigService:
                 "emoji_chance": self.emoji_chance,
                 "max_reg_num": self.max_reg_num,
                 "do_replace": self.do_replace,
-                "maintenance_interval": self.maintenance_interval,
+                "raw_cleanup_interval": self.raw_cleanup_interval,
+                "capacity_control_interval": self.capacity_control_interval,
+                "enable_raw_cleanup": self.enable_raw_cleanup,
+                "enable_capacity_control": self.enable_capacity_control,
                 "content_filtration": self.content_filtration,
                 "vision_provider_id": self.vision_provider_id,
             }

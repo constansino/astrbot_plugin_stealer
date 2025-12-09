@@ -118,7 +118,6 @@ class StealerPlugin(Star):
         self.emoji_chance = self.config_service.emoji_chance
         self.max_reg_num = self.config_service.max_reg_num
         self.do_replace = self.config_service.do_replace
-        self.maintenance_interval = self.config_service.maintenance_interval
         self.steal_emoji = self.config_service.steal_emoji
         self.content_filtration = self.config_service.content_filtration
 
@@ -419,7 +418,10 @@ class StealerPlugin(Star):
                 "emoji_chance": self.emoji_chance,
                 "max_reg_num": self.max_reg_num,
                 "do_replace": self.do_replace,
-                "maintenance_interval": self.maintenance_interval,
+                "raw_cleanup_interval": self.raw_cleanup_interval,
+                "capacity_control_interval": self.capacity_control_interval,
+                "enable_raw_cleanup": self.enable_raw_cleanup,
+                "enable_capacity_control": self.enable_capacity_control,
                 "steal_emoji": self.steal_emoji,
                 "content_filtration": self.content_filtration,
                 "vision_provider_id": self.vision_provider_id,
