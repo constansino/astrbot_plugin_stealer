@@ -15,7 +15,7 @@ from astrbot.api.event.filter import (
     PlatformAdapterType,
 )
 from astrbot.api.message_components import Image, Plain
-from astrbot.api.star import Context, Star, StarTools
+from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .cache_service import CacheService
@@ -36,10 +36,13 @@ try:
 except Exception:  # pragma: no cover - 仅作为兼容分支
     PILImage = None
 
-# 使用文档推荐的插件注册方式 - 需要在文件顶部导入
-from astrbot.api import AstrBotAPI
 
-
+@register(
+    "astrbot_plugin_stealer",
+    "nagatoquin33",
+    "自动偷取并分类表情包，在合适时机发送",
+    "1.0.0",
+)
 class StealerPlugin(Star):
     """表情包偷取与发送插件。
 
@@ -1231,8 +1234,3 @@ class StealerPlugin(Star):
             except Exception as e:
                 yield event.plain_result(f"图片 {i + 1}: 处理出错: {str(e)}")
                 logger.error(f"调试图片处理失败: {e}", exc_info=True)
-
-
-# 使用文档推荐的插件注册方式
-astrbot_api = AstrBotAPI()
-astrbot_api.register_plugin(StealerPlugin)
