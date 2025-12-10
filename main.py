@@ -785,118 +785,153 @@ class StealerPlugin(Star):
     @filter.on_decorating_result()
     async def _prepare_emoji_response(self, event: AstrMessageEvent):
         """准备表情包响应的公共逻辑。"""
+        logger.info("[Stealer] _prepare_emoji_response 被调用")
+
+        # 1. 验证结果对象
         result = event.get_result()
-        if (
-            not result
-            or not hasattr(result, "chain")
-            or not hasattr(result, "get_plain_text")
-        ):
+        if not self._validate_result(result):
+            logger.debug("[Stealer] 结果对象无效，跳过处理")
             return False
 
-        # 文本仅用于本地规则提取情绪关键字，不再请求额外的 LLM
-        # 尝试多种方式获取文本，应对其他插件可能修改result的情况
-        text = ""
-
-        # 方法1: 从result获取（可能被其他插件修改过）
-        if result and hasattr(result, "get_plain_text"):
-            text = result.get_plain_text() or ""
-
-        # 方法2: 如果result为空或被清空，尝试从event获取
-        if not text.strip():
-            text = event.get_message_str() or ""
-
-        # 方法3: 尝试从result的chain中重新构建文本
-        if not text.strip() and result and hasattr(result, "chain"):
-            from astrbot.api.message_components import Plain
-
-            text_parts = []
-            for comp in result.chain:
-                if isinstance(comp, Plain):
-                    text_parts.append(comp.text)
-            text = "".join(text_parts)
-
+        # 2. 提取和清理文本
+        text = result.get_plain_text() or event.get_message_str() or ""
         if not text.strip():
             logger.debug("没有可处理的文本内容，未触发图片发送")
             return False
 
-        logger.debug(f"获取到的文本内容: {text}")
-
+        # 3. 委托给情绪分析服务处理情绪提取和标签清理
         emotions, cleaned_text = await self._extract_emotions_from_text(event, text)
         text_updated = cleaned_text != text
 
-        # 先执行标签清理，无论是否发送表情包都需要清理标签
+        # 4. 更新结果对象（清理标签）
         if text_updated:
-            # 创建新的结果对象并更新内容
-            new_result = event.make_result().set_result_content_type(
-                result.result_content_type
-            )
+            self._update_result_with_cleaned_text(event, result, cleaned_text)
+            logger.debug("已清理情绪标签")
 
-            # 添加除了Plain文本外的其他组件
-            for comp in result.chain:
-                if not isinstance(comp, Plain):
-                    new_result.chain.append(comp)
-
-            # 添加清除标签后的文本
-            if cleaned_text.strip():
-                new_result.message(cleaned_text.strip())
-
-            # 设置新的结果对象
-            event.set_result(new_result)
-
-            # 更新result和text变量，使用清理后的结果
-            result = new_result
-            text = cleaned_text
-
-        # 如果没有情绪标签，不需要继续处理图片发送
+        # 5. 检查是否需要发送表情包
         if not emotions:
             logger.debug("未从文本中提取到情绪关键词，未触发图片发送")
             return text_updated
 
-        # 只有在有情绪标签时才检查发送概率
+        # 6. 委托给事件处理器检查发送条件和发送表情包
+        emoji_sent = await self._try_send_emoji(event, emotions, cleaned_text)
+
+        return text_updated or emoji_sent
+
+    def _validate_result(self, result) -> bool:
+        """验证结果对象是否有效。"""
+        return (
+            result is not None
+            and hasattr(result, "chain")
+            and hasattr(result, "get_plain_text")
+        )
+
+    def _update_result_with_cleaned_text(
+        self, event: AstrMessageEvent, result, cleaned_text: str
+    ):
+        """更新结果对象，使用清理后的文本。"""
+        new_result = event.make_result().set_result_content_type(
+            result.result_content_type
+        )
+
+        # 添加除了Plain文本外的其他组件
+        for comp in result.chain:
+            if not isinstance(comp, Plain):
+                new_result.chain.append(comp)
+
+        # 添加清理后的文本
+        if cleaned_text.strip():
+            new_result.message(cleaned_text.strip())
+
+        event.set_result(new_result)
+
+    async def _try_send_emoji(
+        self, event: AstrMessageEvent, emotions: list[str], cleaned_text: str
+    ) -> bool:
+        """尝试发送表情包。"""
+        # 1. 检查发送概率
+        if not self._check_send_probability():
+            return False
+
+        # 2. 选择表情包
+        emoji_path = await self._select_emoji(emotions[0])
+        if not emoji_path:
+            return False
+
+        # 3. 更新使用次数
+        await self._update_usage_count(emoji_path)
+
+        # 4. 发送表情包
+        await self._send_emoji_with_text(event, emoji_path, cleaned_text)
+
+        logger.debug("已发送表情包")
+        return True
+
+    def _check_send_probability(self) -> bool:
+        """检查表情包发送概率。"""
         try:
             chance = float(self.emoji_chance)
-            # 兜底保护，防止配置错误导致永远/从不触发
             if chance <= 0:
                 logger.debug("表情包自动发送概率为0，未触发图片发送")
-                return text_updated
+                return False
             if chance > 1:
                 chance = 1.0
             if random.random() >= chance:
                 logger.debug(f"表情包自动发送概率检查未通过 ({chance}), 未触发图片发送")
-                return text_updated
+                return False
+
+            logger.debug("表情包自动发送概率检查通过")
+            return True
         except Exception as e:
-            logger.error(f"解析表情包自动发送概率配置失败: {e}，未触发图片发送")
-            return text_updated
+            logger.error(f"解析表情包自动发送概率配置失败: {e}")
+            return False
 
-        logger.debug("表情包自动发送概率检查通过，开始处理图片发送")
-        logger.debug(f"提取到情绪关键词: {emotions}")
-
-        # 目前只取第一个识别到的情绪类别
-        category = emotions[0]
+    async def _select_emoji(self, category: str) -> str | None:
+        """选择表情包文件。"""
         cat_dir = self.base_dir / "categories" / category
         if not cat_dir.exists():
-            logger.debug(f"情绪'{category}'对应的图片目录不存在，未触发图片发送")
-            return text_updated
+            logger.debug(f"情绪'{category}'对应的图片目录不存在")
+            return None
 
         try:
             files = [p for p in cat_dir.iterdir() if p.is_file()]
             if not files:
-                logger.debug(f"情绪'{category}'对应的图片目录为空，未触发图片发送")
-                return text_updated
+                logger.debug(f"情绪'{category}'对应的图片目录为空")
+                return None
 
             logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片")
             picked_image = random.choice(files)
-            image_index = await self._load_index()
-            image_record = image_index.get(picked_image.as_posix())
-            if isinstance(image_record, dict):
-                image_record["usage_count"] = (
-                    int(image_record.get("usage_count", 0)) + 1
-                )
-                image_record["last_used"] = int(asyncio.get_event_loop().time())
-                image_index[picked_image.as_posix()] = image_record
-                await self._save_index(image_index)
+            return picked_image.as_posix()
+        except Exception as e:
+            logger.error(f"选择表情包失败: {e}")
+            return None
 
-            # 创建新的结果对象并更新内容
+    async def _update_usage_count(self, emoji_path: str):
+        """更新表情包使用次数。"""
+        try:
+            image_index = await self._load_index()
+            image_record = image_index.get(emoji_path)
+            if isinstance(image_record, dict):
+                old_count = int(image_record.get("usage_count", 0))
+                image_record["usage_count"] = old_count + 1
+                image_record["last_used"] = int(asyncio.get_event_loop().time())
+                image_index[emoji_path] = image_record
+                await self._save_index(image_index)
+                logger.info(
+                    f"已更新表情包使用次数: {Path(emoji_path).name} ({old_count} -> {image_record['usage_count']})"
+                )
+        except Exception as e:
+            logger.error(f"更新使用次数失败: {e}")
+
+    async def _send_emoji_with_text(
+        self, event: AstrMessageEvent, emoji_path: str, cleaned_text: str
+    ):
+        """发送表情包和文本。"""
+        try:
+            # 获取当前结果
+            result = event.get_result()
+
+            # 创建新的结果对象
             new_result = event.make_result().set_result_content_type(
                 result.result_content_type
             )
@@ -906,22 +941,18 @@ class StealerPlugin(Star):
                 if not isinstance(comp, Plain):
                     new_result.chain.append(comp)
 
-            # 添加清除标签后的文本
+            # 添加清理后的文本
             if cleaned_text.strip():
                 new_result.message(cleaned_text.strip())
 
             # 添加图片
-            b64 = await self.image_processor_service._file_to_base64(
-                picked_image.as_posix()
-            )
+            b64 = await self.image_processor_service._file_to_base64(emoji_path)
             new_result.base64_image(b64)
 
             # 设置新的结果对象
             event.set_result(new_result)
-            return True
-        except (FileNotFoundError, PermissionError) as e:
-            logger.error(f"访问情绪图片目录失败: {e}", exc_info=True)
-            return text_updated
+        except Exception as e:
+            logger.error(f"发送表情包失败: {e}", exc_info=True)
 
     @filter.command("meme on")
     async def meme_on(self, event: AstrMessageEvent):
