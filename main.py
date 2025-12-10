@@ -782,41 +782,51 @@ class StealerPlugin(Star):
         # 委托给 EventHandler 类处理
         await self.event_handler._enforce_capacity(idx)
 
-    @filter.on_decorating_result()
+    @filter.on_decorating_result(priority=100000)
     async def _prepare_emoji_response(self, event: AstrMessageEvent):
-        """准备表情包响应的公共逻辑。"""
+        """准备表情包响应的公共逻辑。
+
+        使用高优先级(100000)确保在分段插件之前执行，
+        避免标签被分段插件处理后无法识别的问题。
+        """
         logger.info("[Stealer] _prepare_emoji_response 被调用")
 
-        # 1. 验证结果对象
-        result = event.get_result()
-        if not self._validate_result(result):
-            logger.debug("[Stealer] 结果对象无效，跳过处理")
-            return False
+        try:
+            # 1. 验证结果对象
+            result = event.get_result()
+            if not self._validate_result(result):
+                logger.debug("[Stealer] 结果对象无效，跳过处理")
+                return False
 
-        # 2. 提取和清理文本
-        text = result.get_plain_text() or event.get_message_str() or ""
-        if not text.strip():
-            logger.debug("没有可处理的文本内容，未触发图片发送")
-            return False
+            # 2. 提取和清理文本
+            text = result.get_plain_text() or event.get_message_str() or ""
+            if not text.strip():
+                logger.debug("没有可处理的文本内容，未触发图片发送")
+                return False
 
-        # 3. 委托给情绪分析服务处理情绪提取和标签清理
-        emotions, cleaned_text = await self._extract_emotions_from_text(event, text)
-        text_updated = cleaned_text != text
+            # 3. 委托给情绪分析服务处理情绪提取和标签清理
+            emotions, cleaned_text = await self._extract_emotions_from_text(event, text)
+            text_updated = cleaned_text != text
 
-        # 4. 更新结果对象（清理标签）
-        if text_updated:
-            self._update_result_with_cleaned_text(event, result, cleaned_text)
-            logger.debug("已清理情绪标签")
+            # 4. 更新结果对象（清理标签）
+            if text_updated:
+                self._update_result_with_cleaned_text(event, result, cleaned_text)
+                logger.debug("已清理情绪标签")
 
-        # 5. 检查是否需要发送表情包
-        if not emotions:
-            logger.debug("未从文本中提取到情绪关键词，未触发图片发送")
-            return text_updated
+            # 5. 检查是否需要发送表情包
+            if not emotions:
+                logger.debug("未从文本中提取到情绪关键词，未触发图片发送")
+                return text_updated
 
-        # 6. 委托给事件处理器检查发送条件和发送表情包
-        emoji_sent = await self._try_send_emoji(event, emotions, cleaned_text)
+            # 6. 委托给事件处理器检查发送条件和发送表情包
+            emoji_sent = await self._try_send_emoji(event, emotions, cleaned_text)
 
-        return text_updated or emoji_sent
+            return text_updated or emoji_sent
+
+        except Exception as e:
+            logger.error(f"[Stealer] 处理表情包响应时发生错误: {e}", exc_info=True)
+            # 即使出错也要返回text_updated，确保标签清理生效
+            return text_updated if "text_updated" in locals() else False
 
     def _validate_result(self, result) -> bool:
         """验证结果对象是否有效。"""
