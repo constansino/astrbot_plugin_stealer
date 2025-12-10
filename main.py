@@ -794,10 +794,32 @@ class StealerPlugin(Star):
             return False
 
         # 文本仅用于本地规则提取情绪关键字，不再请求额外的 LLM
-        text = result.get_plain_text() or event.get_message_str() or ""
+        # 尝试多种方式获取文本，应对其他插件可能修改result的情况
+        text = ""
+
+        # 方法1: 从result获取（可能被其他插件修改过）
+        if result and hasattr(result, "get_plain_text"):
+            text = result.get_plain_text() or ""
+
+        # 方法2: 如果result为空或被清空，尝试从event获取
+        if not text.strip():
+            text = event.get_message_str() or ""
+
+        # 方法3: 尝试从result的chain中重新构建文本
+        if not text.strip() and result and hasattr(result, "chain"):
+            from astrbot.api.message_components import Plain
+
+            text_parts = []
+            for comp in result.chain:
+                if isinstance(comp, Plain):
+                    text_parts.append(comp.text)
+            text = "".join(text_parts)
+
         if not text.strip():
             logger.debug("没有可处理的文本内容，未触发图片发送")
             return False
+
+        logger.debug(f"获取到的文本内容: {text}")
 
         emotions, cleaned_text = await self._extract_emotions_from_text(event, text)
         text_updated = cleaned_text != text
