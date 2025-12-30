@@ -169,6 +169,9 @@ class FileLifecycleManager:
         
         检测并返回失去对应关系的孤立文件列表。
         
+        注意：raw文件被清理后，分类文件独立存在是正常情况，不是孤立文件。
+        只有在异常情况下才会产生真正的孤立文件。
+        
         Returns:
             List[OrphanedFile]: 孤立文件列表
             
@@ -177,10 +180,10 @@ class FileLifecycleManager:
         try:
             orphaned_files = []
             
-            # 获取所有已完成的记录
-            completed_records = await self.db.get_records_by_status(ProcessingStatus.COMPLETED)
+            # 获取所有记录，检查真正的孤立情况
+            all_records = await self.db.get_all_records()
             
-            for record in completed_records:
+            for record in all_records:
                 # 检查原始文件是否存在
                 raw_exists = os.path.exists(record.raw_file_path)
                 
@@ -190,29 +193,60 @@ class FileLifecycleManager:
                     os.path.exists(record.categorized_file_path)
                 )
                 
-                # 如果分类文件存在但原始文件不存在，标记为孤立
-                if categorized_exists and not raw_exists:
-                    orphaned_file = OrphanedFile(
-                        file_path=record.categorized_file_path,
-                        file_type="categorized",
-                        size=record.file_size,
-                        last_modified=record.processing_timestamp or record.creation_timestamp,
-                        reason="原始文件已删除"
-                    )
-                    orphaned_files.append(orphaned_file)
+                # 情况1：处理失败但文件仍然存在 → 真正的孤立文件
+                if record.status == ProcessingStatus.FAILED:
+                    if raw_exists:
+                        orphaned_file = OrphanedFile(
+                            file_path=record.raw_file_path,
+                            file_type="raw",
+                            size=record.file_size,
+                            last_modified=record.creation_timestamp,
+                            reason="处理失败的原始文件"
+                        )
+                        orphaned_files.append(orphaned_file)
+                
+                # 情况2：处理中断但文件仍然存在 → 可能的孤立文件
+                elif record.status == ProcessingStatus.PROCESSING:
+                    # 检查是否长时间处于处理状态（超过1小时）
+                    if record.processing_timestamp:
+                        processing_duration = datetime.now() - record.processing_timestamp
+                        if processing_duration.total_seconds() > 3600:  # 1小时
+                            if raw_exists:
+                                orphaned_file = OrphanedFile(
+                                    file_path=record.raw_file_path,
+                                    file_type="raw",
+                                    size=record.file_size,
+                                    last_modified=record.processing_timestamp,
+                                    reason="长时间处理中断的原始文件"
+                                )
+                                orphaned_files.append(orphaned_file)
+                
+                # 情况3：标记为删除但文件仍然存在 → 清理遗留
+                elif record.status == ProcessingStatus.MARKED_FOR_DELETION:
+                    if raw_exists:
+                        orphaned_file = OrphanedFile(
+                            file_path=record.raw_file_path,
+                            file_type="raw",
+                            size=record.file_size,
+                            last_modified=record.creation_timestamp,
+                            reason="标记删除但未清理的原始文件"
+                        )
+                        orphaned_files.append(orphaned_file)
                     
-                # 如果原始文件存在但分类文件不存在（且状态为已完成），也可能是孤立
-                elif raw_exists and not categorized_exists and record.status == ProcessingStatus.COMPLETED:
-                    orphaned_file = OrphanedFile(
-                        file_path=record.raw_file_path,
-                        file_type="raw",
-                        size=record.file_size,
-                        last_modified=record.creation_timestamp,
-                        reason="分类文件丢失"
-                    )
-                    orphaned_files.append(orphaned_file)
+                    if categorized_exists:
+                        orphaned_file = OrphanedFile(
+                            file_path=record.categorized_file_path,
+                            file_type="categorized",
+                            size=record.file_size,
+                            last_modified=record.processing_timestamp or record.creation_timestamp,
+                            reason="标记删除但未清理的分类文件"
+                        )
+                        orphaned_files.append(orphaned_file)
+                
+                # 注意：已完成处理的文件，即使raw文件被清理，分类文件独立存在也是正常的
+                # 这不是孤立文件，而是插件的正常工作结果
             
-            logger.debug(f"发现 {len(orphaned_files)} 个孤立文件")
+            logger.debug(f"发现 {len(orphaned_files)} 个真正的孤立文件")
             return orphaned_files
             
         except Exception as e:

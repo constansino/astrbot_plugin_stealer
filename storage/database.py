@@ -274,6 +274,19 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"根据状态获取记录失败: {e}")
                 return []
+    
+    async def get_all_records(self) -> List[LifecycleRecord]:
+        """获取所有记录"""
+        async with self._lock:
+            try:
+                conn = await self._get_connection()
+                cursor = conn.execute("SELECT * FROM lifecycle_records")
+                rows = cursor.fetchall()
+                
+                return [self._row_to_lifecycle_record(row) for row in rows]
+            except Exception as e:
+                logger.error(f"获取所有记录失败: {e}")
+                return []
                 
     async def find_orphaned_files(self) -> List[Tuple[str, str]]:
         """查找孤立文件"""
