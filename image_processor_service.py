@@ -391,8 +391,16 @@ class ImageProcessorService:
                         cat_path = os.path.join(cat_dir, os.path.basename(raw_path))
                         shutil.copy2(raw_path, cat_path)
 
-                    # 更新图片索引（用于管理和检索）
-                    idx[raw_path] = {
+                    # 图片已成功分类，立即删除raw目录中的原始文件
+                    try:
+                        if os.path.exists(raw_path):
+                            await self.plugin._safe_remove_file(raw_path)
+                            logger.debug(f"已删除已分类的原始文件（缓存）: {raw_path}")
+                    except Exception as e:
+                        logger.warning(f"删除已分类的原始文件失败（缓存）: {raw_path}, 错误: {e}")
+
+                    # 更新图片索引（使用分类文件路径）
+                    idx[cat_path] = {
                         "hash": hash_val,
                         "category": category,
                         "created_at": int(time.time()),
@@ -457,8 +465,17 @@ class ImageProcessorService:
                     cat_path = os.path.join(cat_dir, os.path.basename(raw_path))
                     shutil.copy2(raw_path, cat_path)
 
-                # 更新图片索引
-                idx[raw_path] = {
+                # 图片已成功分类，立即删除raw目录中的原始文件
+                # 这样可以避免raw目录积压大量文件
+                try:
+                    if os.path.exists(raw_path):
+                        await self.plugin._safe_remove_file(raw_path)
+                        logger.debug(f"已删除已分类的原始文件: {raw_path}")
+                except Exception as e:
+                    logger.warning(f"删除已分类的原始文件失败: {raw_path}, 错误: {e}")
+
+                # 更新图片索引（使用分类文件路径而不是raw路径）
+                idx[cat_path] = {
                     "hash": hash_val,
                     "category": category,
                     "created_at": int(time.time()),

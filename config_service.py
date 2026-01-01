@@ -29,7 +29,7 @@ class PluginConfig(BaseModel):
     )
     steal_emoji: bool = Field(default=True, description="是否开启表情包偷取和清理功能")
     content_filtration: bool = Field(default=False, description="是否开启内容审核")
-    raw_retention_minutes: int = Field(default=60, description="raw目录图片保留期限")
+    raw_retention_minutes: int = Field(default=30, description="raw目录图片保留期限")
     image_processing_mode: str = Field(
         default="probability",
         description="图片处理模式：always/probability/interval/cooldown",
@@ -279,41 +279,56 @@ class ConfigService:
         self.astrbot_config = astrbot_config
         self.config_manager = None
 
-        # 配置属性
-        self.auto_send = True
-        self.emoji_chance = 0.3
-        self.max_reg_num = 500
-        self.do_replace = True
-        self.raw_cleanup_interval = 30
-        self.capacity_control_interval = 60
-        self.enable_raw_cleanup = True
-        self.enable_capacity_control = True
-        self.steal_emoji = True  # 控制偷取和扫描功能的开关
-        self.content_filtration = True
-        self.vision_provider_id = None
-        self.raw_retention_minutes = 60  # raw目录图片保留期限
+        # === 基础功能配置 ===
+        self.steal_emoji = True  # 开启表情包偷取功能
+        self.auto_send = True    # 自动随聊发送表情包
+        self.emoji_chance = 0.4  # 表情包发送概率
 
-        # 图片处理节流配置
-        self.image_processing_mode = "probability"
-        self.image_processing_probability = 0.3
-        self.image_processing_interval = 60
-        self.image_processing_cooldown = 30
+        # === 模型配置 ===
+        self.vision_provider_id = None  # 视觉模型（留空使用当前会话模型）
+        self.content_filtration = False # 内容审核（默认关闭）
 
+        # === 存储管理 ===
+        self.max_reg_num = 100      # 最大表情包数量
+        self.do_replace = True      # 达到上限时替换旧表情包
+
+        # === 节流控制（减少API消耗） ===
+        self.image_processing_mode = "probability"  # 图片处理模式
+        self.image_processing_probability = 0.3     # 概率模式：处理概率
+        self.image_processing_interval = 60         # 间隔模式：处理间隔（秒）
+
+        # === 高级选项 ===
+        self.enable_raw_cleanup = True          # 自动清理原始图片
+        self.raw_cleanup_interval = 30          # 清理检查周期（分钟）
+        self.enable_capacity_control = True     # 自动容量控制
+        self.capacity_control_interval = 60     # 容量检查周期（分钟）
+
+        # === 增强存储系统配置（内部使用，不暴露给用户） ===
+        # 这些配置项不在UI中显示，使用合理的默认值
+        self.enable_lifecycle_tracking = True
+        self.enable_intelligent_cleanup = True
+        self.enable_statistics_tracking = True
+        self.enable_quota_management = True
+        self.enable_duplicate_detection = True
+        self.quota_strategy = "hybrid"
+        self.max_total_size_mb = 5000
+        self.quota_warning_threshold = 0.8
+        self.quota_critical_threshold = 0.95
+        self.cleanup_check_interval = 300
+        self.statistics_aggregation_interval = 3600
+        self.statistics_retention_days = 90
+        self.enable_transaction_logging = True
+        self.max_retry_attempts = 3
+        self.circuit_breaker_threshold = 5
+        self.enable_async_processing = True
+        self.processing_queue_size = 100
+        self.batch_operation_size = 50
+
+        # === 情绪分类 ===
         self.categories = [
-            "happy",
-            "sad",
-            "angry",
-            "shy",
-            "surprised",
-            "smirk",
-            "cry",
-            "confused",
-            "embarrassed",
-            "love",
-            "disgust",
-            "fear",
-            "excitement",
-            "tired",
+            "happy", "sad", "angry", "shy", "surprised", "smirk", 
+            "cry", "confused", "embarrassed", "love", "disgust", 
+            "fear", "excitement", "tired"
         ]
 
         # 别名配置

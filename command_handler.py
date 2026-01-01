@@ -236,68 +236,15 @@ class CommandHandler:
         
         Args:
             event: 消息事件
-            mode: 清理模式，空字符串=清理所有，"expired"=只清理过期文件
+            mode: 清理模式，现在只支持清理所有raw文件
         """
         try:
-            if mode.lower() == "expired":
-                # 只清理过期文件（按保留期限）
-                deleted_count = await self._clean_raw_directory_with_count()
-                yield event.plain_result(f"✅ 已清理过期文件 {deleted_count} 张（保留期限: {self.plugin.raw_retention_minutes}分钟）")
-            else:
-                # 默认清理所有raw文件
-                deleted_count = await self._force_clean_raw_directory()
-                yield event.plain_result(f"✅ raw目录清理完成，共删除 {deleted_count} 张原始图片")
+            # 清理所有raw文件（因为成功分类的文件已经被立即删除了）
+            deleted_count = await self._force_clean_raw_directory()
+            yield event.plain_result(f"✅ raw目录清理完成，共删除 {deleted_count} 张原始图片")
         except Exception as e:
             logger.error(f"手动清理失败: {e}")
             yield event.plain_result(f"❌ 清理失败: {str(e)}")
-    
-    async def _clean_raw_directory_with_count(self) -> int:
-        """按保留期限清理raw目录，返回删除的文件数量。"""
-        try:
-            if not self.plugin.base_dir:
-                logger.warning("插件base_dir未设置，无法清理raw目录")
-                return 0
-                
-            raw_dir = self.plugin.base_dir / "raw"
-            if not raw_dir.exists():
-                logger.info(f"raw目录不存在: {raw_dir}")
-                return 0
-                
-            # 获取raw目录中的所有文件
-            files = list(raw_dir.iterdir())
-            if not files:
-                logger.info(f"raw目录已为空: {raw_dir}")
-                return 0
-                
-            # 设置清理期限
-            import time
-            retention_minutes = int(self.plugin.raw_retention_minutes)
-            current_time = time.time()
-            cutoff_time = current_time - (retention_minutes * 60)
-                
-            # 删除过期文件
-            deleted_count = 0
-            for file_path in files:
-                try:
-                    if file_path.is_file():
-                        # 获取文件修改时间
-                        file_time = file_path.stat().st_mtime
-                        
-                        if file_time < cutoff_time:
-                            if await self.plugin._safe_remove_file(str(file_path)):
-                                deleted_count += 1
-                                logger.debug(f"已删除过期文件: {file_path}")
-                            else:
-                                logger.error(f"删除过期文件失败: {file_path}")
-                except Exception as e:
-                    logger.error(f"处理raw文件时发生错误: {file_path}, 错误: {e}")
-                    
-            logger.info(f"按期限清理raw目录完成，共删除 {deleted_count} 个过期文件")
-            return deleted_count
-            
-        except Exception as e:
-            logger.error(f"按期限清理raw目录失败: {e}")
-            raise
     
     async def _force_clean_raw_directory(self) -> int:
         """强制清理raw目录中的所有文件（忽略保留期限），返回删除的文件数量。"""

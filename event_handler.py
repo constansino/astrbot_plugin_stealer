@@ -107,6 +107,18 @@ class EventHandler:
     # @platform_adapter_type(PlatformAdapterType.ALL)
     async def on_message(self, event: AstrMessageEvent, *args, **kwargs):
         """消息监听：偷取消息中的图片并分类存储。"""
+        # 调试信息
+        logger.debug(f"EventHandler.on_message called with event type: {type(event)}")
+        logger.debug(f"Event object: {event}")
+        logger.debug(f"Args: {args}")
+        logger.debug(f"Kwargs: {kwargs}")
+        
+        # 检查event对象是否正确
+        if not hasattr(event, 'get_messages'):
+            logger.error(f"Event object does not have get_messages method. Type: {type(event)}")
+            logger.error(f"Event attributes: {dir(event)}")
+            return
+        
         plugin_instance = self.plugin
 
         if not plugin_instance.steal_emoji:
@@ -176,17 +188,14 @@ class EventHandler:
                     max_access_age_days=7,  # 默认7天未访问
                 )
                 
-                # 执行清理 - 只清理raw目录，不清理categories目录
-                cleanup_result = await self.cleanup_manager.perform_coordinated_cleanup(
-                    retention_policy=retention_policy,
-                    raw_directory=self.plugin.base_dir / "raw",
-                    # 不传入categories_directory参数，避免误删分类文件
+                # 直接清理raw目录，不执行孤立文件检测，避免误删categories文件
+                raw_stats = await self.cleanup_manager.cleanup_raw_directory(
+                    retention_policy, 
+                    self.plugin.base_dir / "raw"
                 )
                 
-                logger.info(f"增强清理完成: 删除原始文件 {cleanup_result.raw_files_removed} 个, "
-                          f"删除分类文件 {cleanup_result.categorized_files_removed} 个, "
-                          f"删除孤立文件 {cleanup_result.orphaned_files_removed} 个, "
-                          f"释放空间 {cleanup_result.space_freed} 字节")
+                logger.info(f"Raw目录清理完成: 删除原始文件 {raw_stats.files_removed} 个, "
+                          f"释放空间 {raw_stats.space_freed} 字节")
                 
                 return
             
@@ -199,77 +208,44 @@ class EventHandler:
             await self._clean_raw_directory_legacy()
 
     async def _clean_raw_directory_legacy(self):
-        """原有的raw目录清理逻辑（保持向后兼容）"""
+        """简化的raw目录清理逻辑：清理所有raw文件"""
         try:
-            # 设置清理期限：保留配置指定时间内的文件，超过则删除
-            retention_minutes = int(self.plugin.raw_retention_minutes)
-            current_time = time.time()
-            cutoff_time = current_time - (retention_minutes * 60)
-
             total_deleted = 0
 
-            # 清理raw目录
+            # 清理raw目录中的所有文件
             if self.plugin.base_dir:
                 raw_dir = self.plugin.base_dir / "raw"
                 if raw_dir.exists():
-                    logger.debug(
-                        f"开始清理raw目录: {raw_dir}, 保留期限: {retention_minutes}分钟, 当前时间: {current_time}, 截止时间: {cutoff_time}"
-                    )
+                    logger.debug(f"开始清理raw目录: {raw_dir}")
 
                     # 获取raw目录中的所有文件
                     files = list(raw_dir.iterdir())
                     if not files:
                         logger.info(f"raw目录已为空: {raw_dir}")
                     else:
-                        # 清理过期文件
+                        # 清理所有文件（因为成功分类的文件已经被立即删除了）
                         deleted_count = 0
                         for file_path in files:
                             try:
                                 if file_path.is_file():
-                                    # 获取文件修改时间
-                                    file_time = file_path.stat().st_mtime
-                                    logger.debug(
-                                        f"检查文件: {file_path}, 修改时间: {file_time}, 是否过期: {file_time < cutoff_time}"
-                                    )
-
-                                    if file_time < cutoff_time:
-                                        if await self.plugin._safe_remove_file(
-                                            str(file_path)
-                                        ):
-                                            deleted_count += 1
-                                            logger.debug(f"已删除过期文件: {file_path}")
-                                        else:
-                                            logger.error(f"删除过期文件失败: {file_path}")
-                            except (FileNotFoundError, PermissionError) as e:
-                                logger.error(
-                                    f"处理raw文件时文件操作错误: {file_path}, 错误: {e}"
-                                )
-                            except OSError as e:
-                                logger.error(
-                                    f"处理raw文件时系统错误: {file_path}, 错误: {e}"
-                                )
+                                    if await self.plugin._safe_remove_file(str(file_path)):
+                                        deleted_count += 1
+                                        logger.debug(f"已删除raw文件: {file_path}")
+                                    else:
+                                        logger.error(f"删除raw文件失败: {file_path}")
                             except Exception as e:
-                                logger.error(
-                                    f"处理raw文件时发生未预期错误: {file_path}, 错误: {e}",
-                                    exc_info=True,
-                                )
+                                logger.error(f"处理raw文件时发生错误: {file_path}, 错误: {e}")
 
-                        logger.info(f"清理raw目录完成，共删除 {deleted_count} 个过期文件")
+                        logger.info(f"清理raw目录完成，共删除 {deleted_count} 个文件")
                         total_deleted += deleted_count
                 else:
                     logger.info(f"raw目录不存在: {raw_dir}")
             else:
                 logger.warning("插件base_dir未设置，无法清理raw目录")
 
-            logger.info(f"清理完成，总计删除 {total_deleted} 个过期文件")
-        except ValueError as e:
-            logger.error(f"清理目录时配置值错误: {e}")
-        except (FileNotFoundError, PermissionError) as e:
-            logger.error(f"清理目录时文件操作错误: {e}")
-        except OSError as e:
-            logger.error(f"清理目录时系统错误: {e}")
+            logger.info(f"清理完成，总计删除 {total_deleted} 个文件")
         except Exception as e:
-            logger.error(f"清理目录时发生未预期错误: {e}", exc_info=True)
+            logger.error(f"清理目录时发生错误: {e}", exc_info=True)
 
     async def _enforce_capacity(self, image_index: dict):
         """执行容量控制，删除最旧的图片。"""
