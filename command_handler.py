@@ -735,14 +735,6 @@ class CommandHandler:
                 del image_index[target_image['path']]
                 await self.plugin._save_index(image_index)
             
-            # 如果使用增强存储系统，同时更新数据库
-            if (hasattr(self.plugin, 'lifecycle_manager') and 
-                self.plugin.lifecycle_manager):
-                try:
-                    await self._delete_from_enhanced_storage(target_image['path'])
-                except Exception as e:
-                    logger.warning(f"更新增强存储系统失败: {e}")
-            
             yield event.plain_result(
                 f"✅ 已删除表情包:\n"
                 f"文件: {target_image['name']}\n"
@@ -789,40 +781,4 @@ class CommandHandler:
             logger.error(f"删除图片文件失败: {e}")
             return False
 
-    async def _delete_from_enhanced_storage(self, img_path: str):
-        """从增强存储系统中删除记录。
-        
-        Args:
-            img_path: 图片路径
-        """
-        try:
-            if not (hasattr(self.plugin, 'lifecycle_manager') and 
-                   self.plugin.lifecycle_manager):
-                return
-            
-            # 查找对应的生命周期记录
-            records = await self.plugin.lifecycle_manager.get_files_by_path(img_path)
-            
-            for record in records:
-                # 标记为删除状态
-                from .storage.models import ProcessingStatus
-                await self.plugin.lifecycle_manager.update_processing_status(
-                    record.record_id, 
-                    ProcessingStatus.MARKED_FOR_DELETION,
-                    failure_reason="用户手动删除"
-                )
-                
-                # 记录删除事件
-                if (hasattr(self.plugin, 'statistics_tracker') and 
-                    self.plugin.statistics_tracker):
-                    from .storage.models import ProcessingEventType
-                    await self.plugin.statistics_tracker.record_processing_event(
-                        ProcessingEventType.IMAGE_DELETED,
-                        metadata={"file_path": img_path, "deletion_type": "manual"}
-                    )
-            
-            logger.info(f"已更新增强存储系统记录: {img_path}")
-            
-        except Exception as e:
-            logger.error(f"更新增强存储系统失败: {e}")
-            # 不抛出异常，避免影响主删除流程
+

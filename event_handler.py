@@ -20,24 +20,9 @@ class EventHandler:
         self.plugin = plugin_instance
         self._scanner_task: asyncio.Task | None = None
 
-        # 增强存储系统组件
-        self.cleanup_manager = None
-        self.quota_manager = None
-
         # 图片处理节流相关
         self._last_process_time = 0  # 上次处理时间（用于interval和cooldown模式）
         self._process_count = 0  # 处理计数（用于interval模式）
-
-    def set_enhanced_storage(self, cleanup_manager=None, quota_manager=None):
-        """设置增强存储系统组件
-        
-        Args:
-            cleanup_manager: 清理管理器
-            quota_manager: 配额管理器
-        """
-        self.cleanup_manager = cleanup_manager
-        self.quota_manager = quota_manager
-        logger.debug("EventHandler 已设置增强存储系统组件")
 
     def _should_process_image(self) -> bool:
         """根据配置的节流模式判断是否应该处理图片。
@@ -152,7 +137,7 @@ class EventHandler:
 
                 # 确保临时文件存在且可访问
                 if not os.path.exists(temp_path):
-                    logger.error(f"临时文件不存在: {temp_path}")
+                    logger.warning(f"临时文件不存在: {temp_path}")
                     continue
 
                 # 使用统一的图片处理方法
@@ -175,37 +160,11 @@ class EventHandler:
     async def _clean_raw_directory(self):
         """按时间定时清理raw目录中的原始图片。"""
         try:
-            # 如果启用了增强存储系统，使用新的清理管理器
-            if self.cleanup_manager:
-                logger.info("使用增强存储系统进行raw目录清理")
-                
-                # 使用清理管理器进行状态感知清理
-                from .storage.models import RetentionPolicy
-                
-                # 创建保留策略
-                retention_policy = RetentionPolicy(
-                    max_age_days=self.plugin.raw_retention_minutes / (24 * 60),  # 转换为天数
-                    max_access_age_days=7,  # 默认7天未访问
-                )
-                
-                # 直接清理raw目录，不执行孤立文件检测，避免误删categories文件
-                raw_stats = await self.cleanup_manager.cleanup_raw_directory(
-                    retention_policy, 
-                    self.plugin.base_dir / "raw"
-                )
-                
-                logger.info(f"Raw目录清理完成: 删除原始文件 {raw_stats.files_removed} 个, "
-                          f"释放空间 {raw_stats.space_freed} 字节")
-                
-                return
-            
-            # 否则使用原有的清理逻辑
+            # 使用简化的清理逻辑
             await self._clean_raw_directory_legacy()
             
         except Exception as e:
             logger.error(f"清理raw目录失败: {e}")
-            # 回退到原有清理逻辑
-            await self._clean_raw_directory_legacy()
 
     async def _clean_raw_directory_legacy(self):
         """简化的raw目录清理逻辑：清理所有raw文件"""
@@ -250,64 +209,11 @@ class EventHandler:
     async def _enforce_capacity(self, image_index: dict):
         """执行容量控制，删除最旧的图片。"""
         try:
-            # 如果启用了增强存储系统，使用新的配额管理器
-            if self.quota_manager:
-                logger.info("使用增强存储系统进行容量控制")
-                
-                # 检查配额状态
-                quota_status = await self.quota_manager.check_quota_status()
-                
-                if quota_status.is_critical or quota_status.current_count > quota_status.max_count:
-                    logger.info(f"配额超限，当前: {quota_status.current_count}, 最大: {quota_status.max_count}")
-                    
-                    # 执行配额限制（标记文件为删除）
-                    enforcement_result = await self.quota_manager.enforce_quota_limits()
-                    
-                    # 立即执行清理，删除被标记的文件
-                    if enforcement_result.files_removed > 0:
-                        from .storage.models import RetentionPolicy
-                        
-                        # 创建一个宽松的保留策略，主要用于清理被标记的文件
-                        retention_policy = RetentionPolicy(
-                            max_age_days=365,  # 很长的保留期，不基于时间删除
-                            max_access_age_days=365,
-                        )
-                        
-                        # 执行协调清理，只清理categories目录中被标记的文件
-                        cleanup_result = await self.cleanup_manager.perform_coordinated_cleanup(
-                            retention_policy=retention_policy,
-                            categories_directory=self.plugin.base_dir / "categories"
-                            # 不传入raw_directory，避免清理raw文件
-                        )
-                        
-                        logger.info(f"容量控制清理完成: 删除分类文件 {cleanup_result.categorized_files_removed} 个, "
-                                  f"删除孤立文件 {cleanup_result.orphaned_files_removed} 个, "
-                                  f"释放空间 {cleanup_result.space_freed} 字节")
-                        
-                        # 更新索引以反映删除的文件
-                        # 需要从索引中移除已删除的文件
-                        files_to_remove = []
-                        for file_path in image_index.keys():
-                            if not os.path.exists(file_path):
-                                files_to_remove.append(file_path)
-                        
-                        for file_path in files_to_remove:
-                            del image_index[file_path]
-                            logger.debug(f"从索引中移除已删除文件: {file_path}")
-                    
-                    logger.info(f"配额执行完成: 标记删除文件 {enforcement_result.files_removed} 个, "
-                              f"释放空间 {enforcement_result.space_freed} 字节, "
-                              f"生成警告 {len(enforcement_result.warnings_generated)} 个")
-                
-                return
-            
-            # 否则使用原有的容量控制逻辑
+            # 使用简化的容量控制逻辑
             await self._enforce_capacity_legacy(image_index)
             
         except Exception as e:
             logger.error(f"执行容量控制失败: {e}")
-            # 回退到原有容量控制逻辑
-            await self._enforce_capacity_legacy(image_index)
 
     async def _enforce_capacity_legacy(self, image_index: dict):
         """原有的容量控制逻辑（保持向后兼容）"""

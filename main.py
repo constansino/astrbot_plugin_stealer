@@ -126,13 +126,6 @@ class Main(Star):
         for category in self.categories:
             (self.categories_dir / category).mkdir(parents=True, exist_ok=True)
 
-        # 初始化增强存储系统
-        self.db_manager = None
-        self.lifecycle_manager = None
-        self.statistics_tracker = None
-        self.cleanup_manager = None
-        self.quota_manager = None
-
         # 初始化核心服务类
         self.cache_service = CacheService(self.cache_dir)
         self.command_handler = CommandHandler(self)
@@ -189,38 +182,54 @@ class Main(Star):
         # 同步视觉模型配置
         self.vision_provider_id = self._load_vision_provider_id()
 
-    def _validate_config(self):
-        """验证配置参数的有效性。"""
+    def _validate_config(self) -> bool:
+        """验证配置参数的有效性。
+        
+        Returns:
+            bool: 配置是否有效（修复后的配置也算有效）
+        """
         errors = []
+        fixed = []
 
-        if self.max_reg_num <= 0:
-            errors.append("最大表情数量必须大于0")
+        # 验证最大表情数量
+        if not isinstance(self.max_reg_num, int) or self.max_reg_num <= 0:
+            errors.append("最大表情数量必须大于0的整数")
+            self.max_reg_num = 100
+            fixed.append("最大表情数量已重置为100")
 
-        if not (0 <= self.emoji_chance <= 1):
+        # 验证表情发送概率
+        if not isinstance(self.emoji_chance, (int, float)) or not (0 <= self.emoji_chance <= 1):
             errors.append("表情发送概率必须在0-1之间")
+            self.emoji_chance = 0.4
+            fixed.append("表情发送概率已重置为0.4")
 
-        if self.raw_cleanup_interval < 1:
+        # 验证清理周期
+        if not isinstance(self.raw_cleanup_interval, int) or self.raw_cleanup_interval < 1:
             errors.append("raw清理周期必须至少为1分钟")
+            self.raw_cleanup_interval = 30
+            fixed.append("raw清理周期已重置为30分钟")
 
-        if self.capacity_control_interval < 1:
+        # 验证容量控制周期
+        if not isinstance(self.capacity_control_interval, int) or self.capacity_control_interval < 1:
             errors.append("容量控制周期必须至少为1分钟")
+            self.capacity_control_interval = 60
+            fixed.append("容量控制周期已重置为60分钟")
 
-        if self.raw_retention_minutes < 1:
+        # 验证保留期限（如果存在）
+        if hasattr(self, 'raw_retention_minutes') and (
+            not isinstance(self.raw_retention_minutes, int) or self.raw_retention_minutes < 1
+        ):
             errors.append("raw目录保留期限必须至少为1分钟")
+            self.raw_retention_minutes = 60
+            fixed.append("raw目录保留期限已重置为60分钟")
 
+        # 记录问题和修复
         if errors:
             logger.warning(f"配置验证发现问题: {'; '.join(errors)}")
-            # 不抛出异常，而是使用默认值
-            if self.max_reg_num <= 0:
-                self.max_reg_num = 100
-            if not (0 <= self.emoji_chance <= 1):
-                self.emoji_chance = 0.4
-            if self.raw_cleanup_interval < 1:
-                self.raw_cleanup_interval = 30
-            if self.capacity_control_interval < 1:
-                self.capacity_control_interval = 60
-            if self.raw_retention_minutes < 1:
-                self.raw_retention_minutes = 60
+        if fixed:
+            logger.info(f"配置已自动修复: {'; '.join(fixed)}")
+            
+        return True  # 即使有问题也返回True，因为已经修复
 
     def _update_config_from_dict(self, config_dict: dict):
         """从配置字典更新插件配置。"""
@@ -266,30 +275,49 @@ class Main(Star):
             self.categories_dir.mkdir(parents=True, exist_ok=True)
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-            # 初始化增强存储系统
-            await self._initialize_enhanced_storage()
-
             # 加载提示词文件
             try:
                 # 使用__file__获取当前脚本所在目录，即插件安装目录
                 plugin_dir = Path(__file__).parent
                 prompts_path = plugin_dir / "prompts.json"
                 if prompts_path.exists():
-                    with open(prompts_path, encoding="utf-8") as f:
-                        prompts = json.load(f)
-                        logger.info(f"已加载提示词文件: {prompts_path}")
-                        # 将加载的提示词赋值给插件实例属性
-                        for key, value in prompts.items():
-                            setattr(self, key, value)
-                        # 更新图片处理器的提示词
-                        self.image_processor_service.update_config(
-                            emoji_classification_prompt=prompts.get(
-                                "EMOJI_CLASSIFICATION_PROMPT", None
-                            ),
-                            combined_analysis_prompt=prompts.get(
-                                "COMBINED_ANALYSIS_PROMPT", None
-                            ),
-                        )
+                    # 使用异步文件读取
+                    import aiofiles
+                    try:
+                        async with aiofiles.open(prompts_path, encoding="utf-8") as f:
+                            content = await f.read()
+                            prompts = json.loads(content)
+                            logger.info(f"已加载提示词文件: {prompts_path}")
+                            # 将加载的提示词赋值给插件实例属性
+                            for key, value in prompts.items():
+                                setattr(self, key, value)
+                            # 更新图片处理器的提示词
+                            self.image_processor_service.update_config(
+                                emoji_classification_prompt=prompts.get(
+                                    "EMOJI_CLASSIFICATION_PROMPT", None
+                                ),
+                                combined_analysis_prompt=prompts.get(
+                                    "COMBINED_ANALYSIS_PROMPT", None
+                                ),
+                            )
+                    except ImportError:
+                        # 如果aiofiles不可用，回退到同步方式
+                        logger.debug("aiofiles不可用，使用同步文件读取")
+                        with open(prompts_path, encoding="utf-8") as f:
+                            prompts = json.load(f)
+                            logger.info(f"已加载提示词文件: {prompts_path}")
+                            # 将加载的提示词赋值给插件实例属性
+                            for key, value in prompts.items():
+                                setattr(self, key, value)
+                            # 更新图片处理器的提示词
+                            self.image_processor_service.update_config(
+                                emoji_classification_prompt=prompts.get(
+                                    "EMOJI_CLASSIFICATION_PROMPT", None
+                                ),
+                                combined_analysis_prompt=prompts.get(
+                                    "COMBINED_ANALYSIS_PROMPT", None
+                                ),
+                            )
                 else:
                     logger.warning(f"提示词文件不存在: {prompts_path}")
             except Exception as e:
@@ -336,67 +364,7 @@ class Main(Star):
             logger.error(f"初始化插件失败: {e}")
             raise
 
-    async def _initialize_enhanced_storage(self):
-        """初始化增强存储系统"""
-        try:
-            # 创建存储目录
-            storage_dir = self.base_dir / "storage"
-            storage_dir.mkdir(parents=True, exist_ok=True)
-            
-            # 初始化数据库管理器
-            from .storage.database import DatabaseManager
-            from .storage.lifecycle_manager import FileLifecycleManager
-            from .storage.statistics_tracker import StatisticsTracker
-            from .storage.cleanup_manager import CleanupManager
-            from .storage.quota_manager import StorageQuotaManager
-            
-            db_path = storage_dir / "enhanced_storage.db"
-            self.db_manager = DatabaseManager(db_path)
-            await self.db_manager.initialize()
-            
-            # 初始化生命周期管理器
-            self.lifecycle_manager = FileLifecycleManager(self.db_manager)
-            
-            # 初始化统计跟踪器
-            self.statistics_tracker = StatisticsTracker(self.db_manager)
-            
-            # 初始化清理管理器
-            self.cleanup_manager = CleanupManager(
-                database_manager=self.db_manager,
-                lifecycle_manager=self.lifecycle_manager,
-                statistics_tracker=self.statistics_tracker
-            )
-            
-            # 初始化配额管理器
-            self.quota_manager = StorageQuotaManager(
-                database_manager=self.db_manager,
-                lifecycle_manager=self.lifecycle_manager,
-                cleanup_manager=self.cleanup_manager,
-                statistics_tracker=self.statistics_tracker
-            )
-            
-            # 更新图片处理服务以使用新的存储系统
-            self.image_processor_service.set_enhanced_storage(
-                lifecycle_manager=self.lifecycle_manager,
-                statistics_tracker=self.statistics_tracker
-            )
-            
-            # 更新事件处理器以使用新的存储系统
-            self.event_handler.set_enhanced_storage(
-                cleanup_manager=self.cleanup_manager,
-                quota_manager=self.quota_manager
-            )
-            
-            logger.info("增强存储系统初始化完成")
-            
-        except Exception as e:
-            logger.error(f"初始化增强存储系统失败: {e}")
-            # 不抛出异常，允许插件在没有增强存储的情况下运行
-            self.db_manager = None
-            self.lifecycle_manager = None
-            self.statistics_tracker = None
-            self.cleanup_manager = None
-            self.quota_manager = None
+
 
     async def terminate(self):
         """插件销毁生命周期钩子。清理任务。"""
@@ -429,22 +397,6 @@ class Main(Star):
             self.task_scheduler.cancel_task("raw_cleanup_loop")
             self.task_scheduler.cancel_task("capacity_control_loop")
             self.task_scheduler.cancel_task("persona_maintenance_loop")
-
-            # 清理增强存储系统
-            if hasattr(self, "quota_manager") and self.quota_manager:
-                await self.quota_manager.cleanup()
-
-            if hasattr(self, "cleanup_manager") and self.cleanup_manager:
-                await self.cleanup_manager.cleanup()
-
-            if hasattr(self, "statistics_tracker") and self.statistics_tracker:
-                await self.statistics_tracker.cleanup()
-
-            if hasattr(self, "lifecycle_manager") and self.lifecycle_manager:
-                await self.lifecycle_manager.cleanup()
-
-            if hasattr(self, "db_manager") and self.db_manager:
-                await self.db_manager.close()
 
             # 清理各服务资源
             if hasattr(self, "cache_service") and self.cache_service:
@@ -718,7 +670,8 @@ class Main(Star):
                     # 计算文件哈希
                     try:
                         file_hash = await self.image_processor_service._compute_hash(str(img_file))
-                    except:
+                    except Exception as e:
+                        logger.debug(f"计算文件哈希失败: {e}")
                         file_hash = ""
                     
                     # 创建索引记录
@@ -924,9 +877,10 @@ class Main(Star):
             # 优先使用公开 API，如果失败则使用内部 API 作为备选
             try:
                 # 使用 StarTools.get_data_dir() 的父目录来获取 data 目录路径
-                astrbot_data_path = StarTools.get_data_dir().parent.resolve()
+                astrbot_data_path = StarTools.get_data_dir("").parent.resolve()
             except Exception:
                 # 备选方案：使用内部 API
+                logger.warning("使用内部API获取数据路径，建议检查StarTools.get_data_dir()的使用")
                 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
                 astrbot_data_path = Path(get_astrbot_data_path()).resolve()
@@ -1030,6 +984,15 @@ class Main(Star):
 
     async def _raw_cleanup_loop(self):
         """raw目录清理循环任务。"""
+        # 启动时立即执行一次清理
+        try:
+            if self.steal_emoji and self.enable_raw_cleanup:
+                logger.info("启动时执行初始raw目录清理")
+                await self.event_handler._clean_raw_directory()
+                logger.info("初始raw目录清理完成")
+        except Exception as e:
+            logger.error(f"初始raw目录清理失败: {e}", exc_info=True)
+
         while True:
             try:
                 # 等待指定的清理周期
