@@ -6,8 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 ![Python Version](https://img.shields.io/badge/Python-3.10.14%2B-blue)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen)](CONTRIBUTING.md)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey)
 [![Last Commit](https://img.shields.io/github/last-commit/nagatoquin33/astrbot_plugin_stealer)](https://github.com/nagatoquin33/astrbot_plugin_stealer/commits/main)
 
 </div>
@@ -478,6 +477,7 @@
 如果觉得这个插件有用，欢迎给个 ⭐ Star！
 
 </div>
+
 
 
 
