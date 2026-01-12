@@ -19,6 +19,12 @@
     "type": "float",
     "default": 0.4
   },
+  "smart_emoji_selection": {
+    "description": "智能表情包选择（根据上下文匹配）",
+    "type": "bool",
+    "default": true,
+    "hint": "启用后会根据回复内容智能匹配最相关的表情包，禁用则随机选择"
+  },
   
   "_model_section": {
     "description": "=== 模型配置 ===",
@@ -74,6 +80,28 @@
     "description": "间隔模式：处理间隔（秒）",
     "type": "int",
     "default": 60
+  },
+  
+  "_webui_section": {
+    "description": "=== WebUI 管理界面 ===",
+    "type": "text",
+    "invisible": true
+  },
+  "webui_enabled": {
+    "description": "启用 WebUI 管理界面",
+    "type": "bool",
+    "default": true
+  },
+  "webui_host": {
+    "description": "WebUI 监听地址",
+    "type": "string",
+    "default": "0.0.0.0",
+    "hint": "0.0.0.0 表示允许外部访问，127.0.0.1 仅本地访问"
+  },
+  "webui_port": {
+    "description": "WebUI 监听端口",
+    "type": "int",
+    "default": 8899
   },
   
   "_advanced_section": {

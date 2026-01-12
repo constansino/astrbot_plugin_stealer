@@ -781,4 +781,133 @@ class CommandHandler:
             logger.error(f"删除图片文件失败: {e}")
             return False
 
+    async def rebuild_index(self, event: AstrMessageEvent):
+        """重建索引命令，用于从旧版本迁移或修复索引。
+        
+        扫描 categories 目录中的所有图片文件，重新构建索引。
+        """
+        try:
+            yield event.plain_result("🔄 开始重建索引，请稍候...")
+            
+            # 调用插件的重建索引方法
+            rebuilt_index = await self.plugin._rebuild_index_from_files()
+            
+            if not rebuilt_index:
+                yield event.plain_result(
+                    "⚠️ 未找到可重建的图片文件。\n"
+                    f"请确保 categories 目录中存在图片文件:\n"
+                    f"{self.plugin.categories_dir}"
+                )
+                return
+            
+            # 获取旧索引进行对比
+            old_index = await self.plugin._load_index()
+            old_count = len(old_index)
+
+            # 尝试加载旧版本遗留文件（Legacy Data）
+            import json
+            legacy_metadata_count = 0
+            possible_legacy_paths = [
+                self.plugin.base_dir / "index.json",
+                self.plugin.base_dir / "image_index.json", 
+                self.plugin.base_dir / "cache" / "index.json",
+                # 其他可能的路径
+                Path("data/plugin_data/astrbot_plugin_stealer/index.json"),
+                Path("data/plugin_data/astrbot_plugin_stealer/image_index.json"),
+            ]
+            
+            for legacy_path in possible_legacy_paths:
+                if legacy_path.exists():
+                    try:
+                        with open(legacy_path, 'r', encoding='utf-8') as f:
+                            legacy_data = json.load(f)
+                            if isinstance(legacy_data, dict):
+                                # 将旧数据也尝试合并到 old_index 中，作为元数据来源
+                                old_index.update(legacy_data)
+                                legacy_metadata_count += len(legacy_data)
+                    except Exception:
+                        pass
+            
+            # --- 智能合并逻辑开始 ---
+            # 1. 建立哈希查找表，用于处理文件路径变更的情况
+            old_hash_map = {}
+            for k, v in old_index.items():
+                if isinstance(v, dict) and v.get("hash"):
+                    old_hash_map[v["hash"]] = v
+            # 同时也建立文件名->数据映射（处理哈希可能变化但文件名没变的情况）
+            old_name_map = {}
+            for k, v in old_index.items():
+                if isinstance(v, dict):
+                     path_obj = Path(k)
+                     old_name_map[path_obj.name] = v
+
+            recovered_count = 0
+            
+            # 2. 遍历重建的索引，尝试恢复元数据
+            for new_path, new_data in rebuilt_index.items():
+                old_data = None
+                new_path_obj = Path(new_path)
+                
+                # 优先级1: 路径直接匹配
+                if new_path in old_index:
+                    old_data = old_index[new_path]
+                # 优先级2: 哈希匹配
+                elif new_data.get("hash") in old_hash_map:
+                    old_data = old_hash_map[new_data["hash"]]
+                # 优先级3: 文件名匹配
+                elif new_path_obj.name in old_name_map:
+                    old_data = old_name_map[new_path_obj.name]
+                
+                # 如果找到了旧数据，恢复关键元数据
+                if old_data and isinstance(old_data, dict):
+                    # 只有当旧数据包含有效描述时才恢复，避免覆盖新生成的（如果有）
+                    # 但重建索引只生成基础信息，所以这里总是恢复
+                    if old_data.get("desc"):
+                        new_data["desc"] = old_data["desc"]
+                    if old_data.get("tags"):
+                        new_data["tags"] = old_data["tags"]
+                    # 兼容可能存在的其他字段
+                    if "source_message" in old_data:
+                        new_data["source_message"] = old_data["source_message"]
+                    
+                    recovered_count += 1
+            
+            # 3. 使用新的索引作为最终索引（自动清理了不存在的文件记录）
+            final_index = rebuilt_index
+            # --- 智能合并逻辑结束 ---
+            
+            # 保存合并后的索引
+            await self.plugin._save_index(final_index)
+            
+            # 统计信息
+            new_count = len(final_index)
+            
+            # 按分类统计
+            category_stats = {}
+            for img_info in final_index.values():
+                if isinstance(img_info, dict):
+                    cat = img_info.get('category', '未分类')
+                    category_stats[cat] = category_stats.get(cat, 0) + 1
+            
+            # 构建结果消息
+            result_msg = "✅ 索引重建完成！\n\n"
+            result_msg += f"📊 统计信息:\n"
+            result_msg += f"  当前索引数量: {old_count}\n"
+            if legacy_metadata_count > 0:
+                result_msg += f"  旧版备份数据: {legacy_metadata_count} 条\n"
+            result_msg += f"  现有文件数: {new_count}\n"
+            result_msg += f"  已恢复元数据: {recovered_count} 条\n"
+            
+            if category_stats:
+                result_msg += f"\n📂 分类统计:\n"
+                for cat, count in sorted(category_stats.items(), key=lambda x: x[1], reverse=True):
+                    result_msg += f"  {cat}: {count}张\n"
+            
+            yield event.plain_result(result_msg)
+            
+        except Exception as e:
+            logger.error(f"重建索引失败: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 重建索引失败: {str(e)}")
+
+
 

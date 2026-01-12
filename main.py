@@ -19,8 +19,7 @@ from astrbot.api.star import Context, Star, StarTools
 
 
 from .cache_service import CacheService
-
-# 导入新创建的服务类
+from .web_server import WebServer
 from .command_handler import CommandHandler
 
 # 导入原有服务类 - 使用标准的相对导入
@@ -83,8 +82,16 @@ class Main(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
 
-        # 初始化基础路径
-        self.base_dir: Path = StarTools.get_data_dir("astrbot_plugin_stealer")
+        # 初始化基础路径 - 遵循 AstrBot 插件存储大文件规范
+        # 大文件应存储于 data/plugin_data/{plugin_name}/ 目录下
+        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+        # self.name 在 v4.9.2 及以上版本可用
+        plugin_name = getattr(self, "name", "astrbot_plugin_stealer")
+        self.base_dir: Path = Path(get_astrbot_data_path()) / "plugin_data" / plugin_name
+        
+        # 确保基础目录存在
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        
         self.config_path: Path = self.base_dir / "config.json"
         self.raw_dir: Path = self.base_dir / "raw"
         self.categories_dir: Path = self.base_dir / "categories"
@@ -108,7 +115,7 @@ class Main(Star):
             "   &&happy&& 哈哈，这个太有意思了！\n"
             "   &&sad&& 唉，怎么会这样...\n"
             "3. 只能使用列表中的情绪词，严禁创造新词。\n"
-            "4. 不要使用 Markdown 代码块或括号，**仅使用 && 符号**。"
+            "4. 不要使用 Markdown 代码块或括号，**仅使用 && 符号**。\n"
         )
         self.persona_backup: list = []
 
@@ -140,6 +147,8 @@ class Main(Star):
         # 初始化核心服务类
         self.cache_service = CacheService(self.cache_dir)
         self.command_handler = CommandHandler(self)
+        self.web_server = None
+        
         self.event_handler = EventHandler(self)
         self.image_processor_service = ImageProcessorService(self)
         self.emotion_analyzer_service = EmotionAnalyzerService(self)
@@ -171,6 +180,7 @@ class Main(Star):
         # 同步基础配置
         self.auto_send = self.config_service.auto_send
         self.emoji_chance = self.config_service.emoji_chance
+        self.smart_emoji_selection = self.config_service.smart_emoji_selection
         self.max_reg_num = self.config_service.max_reg_num
         self.do_replace = self.config_service.do_replace
         self.raw_cleanup_interval = self.config_service.raw_cleanup_interval
@@ -189,6 +199,11 @@ class Main(Star):
         )
         self.image_processing_interval = self.config_service.image_processing_interval
         self.image_processing_cooldown = self.config_service.image_processing_cooldown
+
+        # 同步 WebUI 配置
+        self.webui_enabled = self.config_service.webui_enabled
+        self.webui_host = self.config_service.webui_host
+        self.webui_port = self.config_service.webui_port
 
         # 同步视觉模型配置
         self.vision_provider_id = self._load_vision_provider_id()
@@ -250,10 +265,41 @@ class Main(Star):
         try:
             # 使用配置服务更新配置
             if self.config_service:
+                # 记录旧的 WebUI 配置，用于判断是否需要重启 Web Server
+                old_webui_enabled = getattr(self, "webui_enabled", True)
+                old_webui_host = getattr(self, "webui_host", "0.0.0.0")
+                old_webui_port = getattr(self, "webui_port", 8899)
+
                 self.config_service.update_config_from_dict(config_dict)
 
                 # 统一同步所有配置
                 self._sync_all_config()
+
+                # 检查 WebUI 配置是否变化并重启
+                # 注意：on_config_update 可能是同步调用，重启操作涉及IO，使用 create_task 异步执行
+                if (
+                    old_webui_enabled != self.webui_enabled or
+                    old_webui_host != self.webui_host or
+                    old_webui_port != self.webui_port
+                ):
+                    async def restart_webui():
+                        logger.info("检测到 WebUI 配置变更，正在重启 WebUI...")
+                        if self.web_server:
+                            await self.web_server.stop()
+                            self.web_server = None
+                        
+                        if self.webui_enabled:
+                            try:
+                                self.web_server = WebServer(
+                                    self, 
+                                    host=self.webui_host, 
+                                    port=self.webui_port
+                                )
+                                await self.web_server.start()
+                            except Exception as e:
+                                logger.error(f"重启 WebUI 失败: {e}")
+                    
+                    asyncio.create_task(restart_webui())
 
                 # 更新其他服务的配置
                 self.image_processor_service.update_config(
@@ -332,7 +378,24 @@ class Main(Star):
                 else:
                     logger.warning(f"提示词文件不存在: {prompts_path}")
             except Exception as e:
-                logger.error(f"加载提示词文件失败: {e}")
+                logger.error(f"初始化提示词失败: {e}")
+
+            # 启动WebUI（如果启用）
+            if self.webui_enabled:
+                try:
+                    self.web_server = WebServer(
+                        self, 
+                        host=self.webui_host, 
+                        port=self.webui_port
+                    )
+                    await self.web_server.start()
+                except Exception as e:
+                    logger.error(f"启动WebUI失败: {e}")
+            else:
+                logger.info("WebUI 已禁用，跳过启动")
+
+            # 加载索引缓存
+            self._load_index()
 
             # 统一同步所有配置
             self._sync_all_config()
@@ -379,6 +442,13 @@ class Main(Star):
 
     async def terminate(self):
         """插件销毁生命周期钩子。清理任务。"""
+        
+        # 停止WebUI
+        if getattr(self, 'web_server', None):
+            try:
+                await self.web_server.stop()
+            except Exception as e:
+                logger.error(f"停止WebUI失败: {e}")
 
         try:
             # 恢复人格
@@ -601,7 +671,7 @@ class Main(Star):
                             old_data = json.load(f)
                         
                         if isinstance(old_data, dict) and old_data:
-                            logger.info(f"从 {old_path} 迁移了 {len(old_data)} 条记录")
+                            logger.info(f"从 {old_path} 加载了 {len(old_data)} 条旧记录")
                             migrated_data.update(old_data)
                             
                             # 备份旧文件
@@ -613,17 +683,59 @@ class Main(Star):
                         logger.error(f"迁移文件 {old_path} 失败: {e}")
                         continue
             
-            # 检查categories目录中的图片文件，重建索引
-            if not migrated_data and self.categories_dir.exists():
-                logger.info("尝试从categories目录重建索引...")
-                migrated_data = await self._rebuild_index_from_files()
+            # 如果没有找到任何旧数据，直接返回
+            if not migrated_data:
+                logger.info("未发现需要迁移的旧版本数据文件")
+                return {}
+
+            # --- 智能合并逻辑 ---
+            # 加载当前索引
+            current_index = await self._load_index()
             
-            # 如果成功迁移了数据，保存到新的缓存系统
-            if migrated_data:
-                logger.info(f"成功迁移 {len(migrated_data)} 条索引记录")
-                self.cache_service.set_cache("index_cache", migrated_data, persist=True)
+            # 建立当前索引的哈希映射
+            current_hash_map = {}
+            for k, v in current_index.items():
+                if isinstance(v, dict) and v.get("hash"):
+                    current_hash_map[v["hash"]] = k  # hash -> path
+            
+            merged_count = 0
+            
+            # 遍历旧数据，尝试合并到当前索引
+            for old_path, old_info in migrated_data.items():
+                if not isinstance(old_info, dict):
+                    continue
+                
+                target_path = None
+                
+                # 1. 路径完全匹配
+                if old_path in current_index:
+                    target_path = old_path
+                # 2. 哈希匹配（处理路径变更）
+                elif old_info.get("hash") in current_hash_map:
+                    target_path = current_hash_map[old_info["hash"]]
+                
+                # 如果找到了对应的目标记录，且旧数据有描述/标签，保留之
+                if target_path:
+                    target_info = current_index[target_path]
+                    updated = False
+                    
+                    if old_info.get("desc") and not target_info.get("desc"):
+                        target_info["desc"] = old_info["desc"]
+                        updated = True
+                        
+                    if old_info.get("tags") and not target_info.get("tags"):
+                        target_info["tags"] = old_info["tags"]
+                        updated = True
+                        
+                    if updated:
+                        merged_count += 1
+            
+            # 保存合并后的索引
+            if merged_count > 0:
+                logger.info(f"成功从旧数据中恢复了 {merged_count} 条记录的元数据")
+                await self._save_index(current_index)
             else:
-                logger.info("未发现需要迁移的旧版本数据")
+                logger.info("旧数据已加载，但没有新的元数据需要合并")
             
             return migrated_data
             
@@ -988,10 +1100,10 @@ class Main(Star):
 
     @filter.event_message_type(EventMessageType.ALL)
     @filter.platform_adapter_type(PlatformAdapterType.ALL)
-    async def on_message(self, event: AstrMessageEvent, *args, **kwargs):
+    async def on_message(self, event: AstrMessageEvent):
         """消息监听：偷取消息中的图片并分类存储。"""
         # 委托给 EventHandler 类处理
-        await self.event_handler.on_message(event, *args, **kwargs)
+        await self.event_handler.on_message(event)
 
     async def _raw_cleanup_loop(self):
         """raw目录清理循环任务。"""
@@ -1120,11 +1232,33 @@ class Main(Star):
                 logger.debug("没有可处理的文本内容，未触发图片发送")
                 return False
 
+            # 2.5 检查并处理显式的表情包标记 (来自 Tool 调用)
+            import re
+            explicit_emojis = []
+            
+            def tag_replacer(match):
+                explicit_emojis.append(match.group(1))
+                return "" # 从文本中移除标记
+            
+            # 标记格式: [ast_emoji:path]
+            # 使用非贪婪匹配
+            text_without_tags = re.sub(r"\[ast_emoji:(.*?)\]", tag_replacer, text)
+            has_explicit = len(explicit_emojis) > 0
+
             # 3. 委托给情绪分析服务处理情绪提取和标签清理
-            emotions, cleaned_text = await self._extract_emotions_from_text(event, text)
+            # 传入已移除显式标记的文本
+            emotions, cleaned_text = await self._extract_emotions_from_text(event, text_without_tags)
             text_updated = cleaned_text != text
 
-            # 4. 更新结果对象（清理标签）
+            # 4. 更新结果
+            if has_explicit:
+                # 如果有显式表情包，优先发送显式表情包
+                # 这时不再触发自动表情包发送，避免重复
+                await self._send_explicit_emojis(event, explicit_emojis, cleaned_text)
+                logger.info(f"已发送 {len(explicit_emojis)} 张显式表情包")
+                return True
+
+            # 4.1 更新结果对象（清理标签）仅当没有显式发送时（显式发送已包含文本更新逻辑）
             if text_updated:
                 self._update_result_with_cleaned_text(event, result, cleaned_text)
                 logger.debug("已清理情绪标签")
@@ -1179,8 +1313,8 @@ class Main(Star):
         if not self._check_send_probability():
             return False
 
-        # 2. 选择表情包
-        emoji_path = await self._select_emoji(emotions[0])
+        # 2. 智能选择表情包（传入上下文）
+        emoji_path = await self._select_emoji(emotions[0], cleaned_text)
         if not emoji_path:
             return False
 
@@ -1209,8 +1343,26 @@ class Main(Star):
             logger.error(f"解析表情包自动发送概率配置失败: {e}")
             return False
 
-    async def _select_emoji(self, category: str) -> str | None:
-        """选择表情包文件。"""
+    async def _select_emoji(self, category: str, context_text: str = "") -> str | None:
+        """智能选择表情包文件，根据上下文匹配最相关的表情包。
+        
+        Args:
+            category: 情绪分类
+            context_text: 上下文文本（可选），用于智能匹配
+            
+        Returns:
+            表情包文件路径，如果没有则返回None
+        """
+        # 检查是否启用智能选择
+        use_smart = getattr(self, 'smart_emoji_selection', True)
+        
+        # 如果启用智能选择且提供了上下文，使用智能选择
+        if use_smart and context_text and len(context_text.strip()) > 5:
+            smart_path = await self._select_emoji_smart(category, context_text)
+            if smart_path:
+                return smart_path
+        
+        # 降级到随机选择（原有逻辑）
         cat_dir = self.base_dir / "categories" / category
         if not cat_dir.exists():
             logger.debug(f"情绪'{category}'对应的图片目录不存在")
@@ -1222,11 +1374,99 @@ class Main(Star):
                 logger.debug(f"情绪'{category}'对应的图片目录为空")
                 return None
 
-            logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片")
+            logger.debug(f"从'{category}'目录中找到 {len(files)} 张图片（{'智能选择失败，' if use_smart else ''}随机选择）")
             picked_image = random.choice(files)
             return picked_image.as_posix()
         except Exception as e:
             logger.error(f"选择表情包失败: {e}")
+            return None
+    
+    async def _select_emoji_smart(self, category: str, context_text: str) -> str | None:
+        """智能选择表情包，根据上下文匹配描述和标签。
+        
+        Args:
+            category: 情绪分类
+            context_text: 上下文文本
+            
+        Returns:
+            最匹配的表情包路径，如果没有则返回None
+        """
+        try:
+            # 1. 加载索引，获取该分类下的所有表情包
+            idx = await self._load_index()
+            candidates = []
+            
+            for file_path, data in idx.items():
+                if not isinstance(data, dict):
+                    continue
+                
+                # 匹配分类
+                file_category = data.get("category", data.get("emotion", ""))
+                if file_category != category:
+                    continue
+                
+                # 检查文件是否存在
+                if not os.path.exists(file_path):
+                    continue
+                
+                # 获取描述和标签
+                desc = str(data.get("desc", "")).lower()
+                tags = [str(t).lower() for t in data.get("tags", [])]
+                
+                # 计算匹配分数
+                score = 0
+                context_lower = context_text.lower()
+                
+                # 1. 描述匹配
+                if desc:
+                    if desc in context_lower:
+                        # 描述完整包含在上下文中
+                        score += 20
+                    else:
+                        # 词汇匹配
+                        desc_words = [w for w in desc.split() if len(w) > 1]
+                        matched_words = 0
+                        for word in desc_words:
+                            if word in context_lower:
+                                matched_words += 1
+                        
+                        if matched_words > 0:
+                            score += matched_words * 5  # 每个匹配词5分
+                
+                # 2. 标签匹配
+                for tag in tags:
+                    if len(tag) > 1 and tag in context_lower:
+                        score += 8  # 标签匹配8分
+                
+                # 即使没有匹配也加入候选（score=0）
+                candidates.append({
+                    "path": file_path,
+                    "score": score,
+                    "desc": desc
+                })
+            
+            if not candidates:
+                logger.debug(f"分类 '{category}' 下没有可用的表情包")
+                return None
+            
+            # 2. 根据分数选择
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+            
+            if candidates[0]["score"] > 0:
+                # 有匹配：从高分候选中随机选择（增加多样性）
+                max_score = candidates[0]["score"]
+                top_candidates = [c for c in candidates if c["score"] >= max_score * 0.7]
+                selected = random.choice(top_candidates)
+                logger.info(f"智能匹配表情包: 分数={selected['score']}, 描述={selected['desc'][:30]}")
+                return selected["path"]
+            else:
+                # 无匹配：随机选择
+                selected = random.choice(candidates)
+                logger.debug(f"未找到匹配，随机选择表情包")
+                return selected["path"]
+                
+        except Exception as e:
+            logger.error(f"智能选择表情包失败: {e}", exc_info=True)
             return None
 
     async def _send_emoji_with_text(
@@ -1259,6 +1499,44 @@ class Main(Star):
             event.set_result(new_result)
         except Exception as e:
             logger.error(f"发送表情包失败: {e}", exc_info=True)
+
+    async def _send_explicit_emojis(
+        self, event: AstrMessageEvent, emoji_paths: list[str], cleaned_text: str
+    ):
+        """发送显式指定的表情包列表和文本。"""
+        try:
+            # 获取当前结果
+            result = event.get_result()
+
+            # 创建新的结果对象
+            new_result = event.make_result().set_result_content_type(
+                result.result_content_type
+            )
+
+            # 添加除了Plain文本外的其他组件
+            for comp in result.chain:
+                if not isinstance(comp, Plain):
+                    new_result.chain.append(comp)
+
+            # 添加清理后的文本
+            if cleaned_text.strip():
+                new_result.message(cleaned_text.strip())
+
+            # 依次添加图片
+            for path in emoji_paths:
+                try:
+                    if os.path.exists(path):
+                        b64 = await self.image_processor_service._file_to_base64(path)
+                        new_result.base64_image(b64)
+                    else:
+                        logger.warning(f"显式表情包文件不存在: {path}")
+                except Exception as e:
+                    logger.error(f"加载显式表情包失败: {path}, {e}")
+
+            # 设置新的结果对象
+            event.set_result(new_result)
+        except Exception as e:
+            logger.error(f"发送显式表情包失败: {e}", exc_info=True)
 
     @filter.command("meme on")
     async def meme_on(self, event: AstrMessageEvent):
@@ -1523,11 +1801,16 @@ class Main(Star):
         async for result in self.command_handler.delete_image(event, identifier):
             yield result
 
+    # @filter.command("meme migrate")
+    # async def migrate_data(self, event: AstrMessageEvent):
+    #     """(已废弃) 迁移旧版本数据。请使用 rebuild_index"""
+    #     yield event.plain_result("❌ 此命令已合并到 rebuild_index，请使用 /plugin meme rebuild_index")
+
     @filter.permission_type(PermissionType.ADMIN)
-    @filter.command("meme migrate")
-    async def migrate_data(self, event: AstrMessageEvent):
-        """迁移旧版本数据。用法: /meme migrate"""
-        async for result in self.command_handler.migrate_legacy_data(event):
+    @filter.command("meme rebuild_index")
+    async def rebuild_index(self, event: AstrMessageEvent):
+        """重建索引，用于迁移旧版本或修复索引。用法: /meme rebuild_index"""
+        async for result in self.command_handler.rebuild_index(event):
             yield result
 
     @filter.permission_type(PermissionType.ADMIN)
@@ -1567,3 +1850,56 @@ class Main(Star):
         except Exception as e:
             logger.error(f"检查人格状态失败: {e}")
             yield event.plain_result(f"❌ 检查人格状态失败: {e}")
+
+    @filter.llm_tool(name="search_emoji")
+    async def search_emoji(self, event: AstrMessageEvent, query: str) -> str:
+        """搜索并发送表情包图片。调用此工具会在你的回复中自动插入匹配的表情包。
+        
+        使用场景：
+        - 想用表情包增强情绪表达时（开心、难过、生气等）
+        - 回应有趣内容，用表情包增强气氛
+        - 表达同情、安慰时，用表情包增加温暖感
+        
+        工作原理：
+        1. 调用此工具后，返回内容包含特殊标记和简短描述
+        2. 将返回的完整内容直接包含在你的回复文本中
+        3. 标记会被自动转换为实际图片，描述会保留显示
+        
+        使用示例：
+        - 对方："今天考试都过了！" → 调用 search_emoji(query="开心") → 回复："&&happy&& " + [工具返回值] + " 太棒了！恭喜你！"
+        - 对方："我好难过..." → 调用 search_emoji(query="哭泣") → 回复："&&sad&& " + [工具返回值] + " 别难过..."
+        
+        注意事项：
+        - 不要过度使用，每次回复最多1-2张表情包
+        - 纯信息性回复（技术问答、数据查询等）通常不需要表情包
+        - 如果找不到合适的表情包，会返回提示信息，不影响正常回复
+        
+        可用的情绪分类（优先匹配）：
+        happy, sad, angry, shy, surprised, smirk, cry, confused, embarrassed, love, disgust, fear, excitement, tired, sigh
+        
+        Args:
+            query (string): 表情包的搜索关键词。
+                - 优先使用情绪词：happy/开心、sad/难过、angry/生气、cry/哭泣 等
+                - 也可使用具体描述：大笑、点赞、害羞、疑惑 等
+                - 搜索会优先匹配情绪分类，其次匹配描述和标签
+        """
+        logger.info(f"LLM 请求搜索表情包: {query}")
+        # 确保索引已加载
+        if not self.cache_service.get_cache("index_cache"):
+            await self._load_index()
+
+        results = await self.image_processor_service.search_images(query, limit=1)
+        
+        if not results:
+            return f"抱歉，图库中没有找到关于'{query}'的表情包。"
+            
+        path, desc, emotion = results[0]
+        
+        # 返回带特殊标记的字符串，LLM会将其包含在回复中，然后由插件的消息装饰器解析并替换为真实图片
+        # 同时告知LLM找到了什么，增加透明度
+        # 使用不易混淆的标记
+        feedback = f"✅ 已为你选择了一张表情包"
+        if desc and desc.strip():
+            feedback += f"（{desc[:50]}）"  # 限制长度避免过长
+        feedback += f" [ast_emoji:{path}]"
+        return feedback

@@ -10,6 +10,7 @@
   "enable_raw_cleanup": true,
   "enable_capacity_control": true,
   "steal_emoji": true,
+  "smart_emoji_selection": true,
   "content_filtration": false,
   "image_processing_mode": "probability",
   "image_processing_probability": 0.3,

@@ -90,13 +90,10 @@ class EventHandler:
     # 注意：这个方法不需要装饰器，因为在Main类中已经使用了装饰器
     # @event_message_type(EventMessageType.ALL)
     # @platform_adapter_type(PlatformAdapterType.ALL)
-    async def on_message(self, event: AstrMessageEvent, *args, **kwargs):
+    async def on_message(self, event: AstrMessageEvent):
         """消息监听：偷取消息中的图片并分类存储。"""
         # 调试信息
         logger.debug(f"EventHandler.on_message called with event type: {type(event)}")
-        logger.debug(f"Event object: {event}")
-        logger.debug(f"Args: {args}")
-        logger.debug(f"Kwargs: {kwargs}")
         
         # 检查event对象是否正确
         if not hasattr(event, 'get_messages'):

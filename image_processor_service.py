@@ -132,12 +132,12 @@ class ImageProcessorService:
 ---
 
 ## 输出格式
-严格按照以下格式返回，不要添加任何解释：
-是否为表情包|情绪分类
+严格按照以下格式返回，使用竖线 '|' 分隔五部分内容，不要添加任何解释：
+是否为表情包|情绪分类|语义标签(用逗号分隔)|画面描述(一句话)
 
 **示例：**
-是|happy
-否|非表情包""",
+是|happy|大笑,熊猫人,指人|熊猫人指着屏幕大笑
+否|非表情包|无|一张风景照片""",
         )
 
         # 内容过滤+表情包识别分类的三合一合并提示词
@@ -145,7 +145,7 @@ class ImageProcessorService:
         self.combined_analysis_prompt = getattr(
             plugin_instance,
             "COMBINED_ANALYSIS_PROMPT",
-            """你是专业的图片内容审核与表情包分析专家，擅长分析中文互联网文化中的表情包特征和情绪表达。请按照以下要求进行三步分析：
+            """你是专业的图片内容审核与表情包分析专家，擅长分析中文互联网文化中的表情包特征和情绪表达。请按照以下要求进行四步分析：
 
 ## 第一步：内容过滤
 判断图片是否包含不当内容：
@@ -201,16 +201,21 @@ class ImageProcessorService:
 - 优先考虑中文网络文化中的情绪表达习惯
 - 即使情绪复杂，也要选择最主要的情绪分类
 
+## 第四步：内容描述
+如果是表情包，请提供：
+1. **语义标签**：提取图片中的关键元素、动作、文字梗，用逗号分隔（如：熊猫人, 挠头, 疑问）
+2. **画面描述**：用一句话详细描述表情包的内容和场景（如：一只卡通猫咪一脸疑惑地看着屏幕，配文"啊？"）
+
 ---
 
 ## 输出格式
-严格按照以下格式返回，不要添加任何解释：
-过滤结果|是否为表情包|情绪分类
+严格按照以下格式返回，使用竖线 '|' 分隔五部分内容，不要添加任何解释：
+过滤结果|是否为表情包|情绪分类|语义标签|画面描述
 
 **示例：**
-通过|是|happy
-过滤不通过|否|none
-通过|否|非表情包""",
+通过|是|happy|大笑,熊猫人,指人|熊猫人指着屏幕大笑
+过滤不通过|否|none|无|无
+通过|否|非表情包|无|无""",
         )
 
         # 配置参数
@@ -366,7 +371,17 @@ class ImageProcessorService:
                         cat_dir = os.path.join(self.base_dir, "categories", category)
                         os.makedirs(cat_dir, exist_ok=True)
                         cat_path = os.path.join(cat_dir, os.path.basename(raw_path))
-                        shutil.copy2(raw_path, cat_path)
+                        
+                        # 检查文件是否仍然存在
+                        if not os.path.exists(raw_path):
+                            logger.warning(f"原始文件已不存在（缓存分支），可能被清理: {raw_path}")
+                            return False, None
+                        
+                        try:
+                            shutil.copy2(raw_path, cat_path)
+                        except FileNotFoundError:
+                            logger.warning(f"复制文件时发现文件已被删除（缓存分支）: {raw_path}")
+                            return False, None
 
                     # 图片已成功分类，立即删除raw目录中的原始文件
                     try:
@@ -435,12 +450,22 @@ class ImageProcessorService:
             if category and category in self.VALID_CATEGORIES:
                 logger.debug(f"图片分类结果有效: {category}")
 
+                # 检查文件是否仍然存在（可能被清理任务删除）
+                if not os.path.exists(raw_path):
+                    logger.warning(f"原始文件已不存在，可能被清理任务删除: {raw_path}")
+                    return False, None
+
                 # 复制图片到对应分类目录
                 if self.base_dir:
                     cat_dir = os.path.join(self.base_dir, "categories", category)
                     os.makedirs(cat_dir, exist_ok=True)
                     cat_path = os.path.join(cat_dir, os.path.basename(raw_path))
-                    shutil.copy2(raw_path, cat_path)
+                    
+                    try:
+                        shutil.copy2(raw_path, cat_path)
+                    except FileNotFoundError:
+                        logger.warning(f"复制文件时发现文件已被删除: {raw_path}")
+                        return False, None
 
                 # 图片已成功分类，立即删除raw目录中的原始文件
                 # 这样可以避免raw目录积压大量文件
@@ -455,6 +480,8 @@ class ImageProcessorService:
                 idx[cat_path] = {
                     "hash": hash_val,
                     "category": category,
+                    "tags": tags,
+                    "desc": desc,
                     "created_at": int(time.time()),
                 }
 
@@ -552,17 +579,20 @@ class ImageProcessorService:
                 response = await self._call_vision_model(event, file_path, prompt)
                 logger.debug(f"表情包分析原始响应: {response}")
 
-                # 解析响应结果 - 使用正则表达式提高健壮性
-                pattern = r"^(是|否)\s*\|\s*([^|]+)$"
-                match = re.match(pattern, response.strip())
-                if not match:
-                    error_msg = f"表情包分析响应格式错误: {response}"
-                    logger.error(error_msg)
-                    raise ValueError(error_msg)
-
+                # 解析响应结果 - 升级为支持标签和描述
+                # 格式: IsEmoji|Emotion|Tags|Description
+                parts = [p.strip() for p in response.strip().split('|')]
+                
                 filter_result = "通过"
-                is_emoji_result = match.group(1).strip()
-                emotion_result = match.group(2).strip()
+                is_emoji_result = parts[0] if len(parts) > 0 else "否"
+                emotion_result = parts[1] if len(parts) > 1 else "非表情包"
+                
+                # 提取标签和描述（如果有）
+                tags_str = parts[2] if len(parts) > 2 else ""
+                desc_result = parts[3] if len(parts) > 3 else "无描述"
+                
+                # 处理标签列表
+                tags_result = [t.strip() for t in tags_str.split(',') if t.strip() and t.strip() != "无"]
             else:
                 # 使用内容过滤和表情包分析的合并提示词
                 prompt = self.combined_analysis_prompt.format(
@@ -573,17 +603,20 @@ class ImageProcessorService:
                 response = await self._call_vision_model(event, file_path, prompt)
                 logger.debug(f"内容过滤和表情包分析原始响应: {response}")
 
-                # 解析响应结果 - 使用正则表达式提高健壮性
-                pattern = r"^([^|]+)\s*\|\s*(是|否)\s*\|\s*([^|]+)$"
-                match = re.match(pattern, response.strip())
-                if not match:
-                    error_msg = f"内容过滤和表情包分析响应格式错误: {response}"
-                    logger.error(error_msg)
-                    raise ValueError(error_msg)
-
-                filter_result = match.group(1).strip()
-                is_emoji_result = match.group(2).strip()
-                emotion_result = match.group(3).strip()
+                # 解析响应结果 - 升级为支持标签和描述
+                # 格式: Filter|IsEmoji|Emotion|Tags|Description
+                parts = [p.strip() for p in response.strip().split('|')]
+                
+                filter_result = parts[0] if len(parts) > 0 else "过滤不通过"
+                is_emoji_result = parts[1] if len(parts) > 1 else "否"
+                emotion_result = parts[2] if len(parts) > 2 else "非表情包"
+                
+                # 提取标签和描述（如果有）
+                tags_str = parts[3] if len(parts) > 3 else ""
+                desc_result = parts[4] if len(parts) > 4 else "无描述"
+                
+                # 处理标签列表
+                tags_result = [t.strip() for t in tags_str.split(',') if t.strip() and t.strip() != "无"]
 
             # 处理过滤结果
             if filter_result == "过滤不通过":
@@ -598,25 +631,21 @@ class ImageProcessorService:
                 category = emotion_result
             else:
                 # 尝试从响应中提取有效类别
+                found_category = None
                 for valid_cat in self.VALID_CATEGORIES:
-                    if valid_cat in response.lower():
-                        category = valid_cat
+                    if valid_cat in emotion_result:
+                        found_category = valid_cat
                         break
+                
+                if found_category:
+                    category = found_category
                 else:
-                    # 无法提取有效分类，返回空结果
-                    logger.debug(f"无法从响应中提取有效分类: {response}")
-                    return "", [], "", ""
-
-                # 如果不是表情包，返回特定标识
-                if is_emoji_result.lower() != "是":
+                    # 如果无法提取有效分类，视为识别失败，直接标记为非表情包以便外部逻辑进行清理
+                    logger.warning(f"无法从响应中提取有效情绪分类: {emotion_result}，丢弃该图片")
                     return "非表情包", [], "", "非表情包"
 
-            # 不使用VLM进行详细描述，直接返回空的描述和标签
-            desc = ""
-            tags = []
+            return category, tags_result, desc_result, category
 
-            # 确保返回格式一致，情绪标签与分类相同
-            return category, tags, desc, category
         except Exception as e:
             # 添加更多上下文信息
             error_msg = f"图片分类失败 [图片路径: {file_path}]: {e}"
@@ -946,3 +975,93 @@ class ImageProcessorService:
         except Exception as e:
             logger.error(f"存储图片失败: {e}")
             return src_path
+
+    async def search_images(self, query: str, limit: int = 1) -> list[tuple[str, str, str]]:
+        """根据查询词搜索图片。
+        
+        Args:
+            query: 搜索查询词
+            limit: 返回结果数量限制
+            
+        Returns:
+            list[tuple[str, str, str]]: 结果列表，每项为 (文件路径, 描述, 情绪)
+        """
+        try:
+            # 加载索引
+            # 注意：这里我们假设 Main 类会通过 update_index 传递最新的 idx，或者我们直接访问 Main 的 cache_service
+            # 为了解耦，最好是 Main 调用 search 时传入 idx，或者 Service 能访问 Index
+            # 目前 ImageProcessorService 没有直接访问 persistent index 的能力，只有 process_image 时传入 idx
+            
+            # 使用 hack 方式：尝试通过 plugin 实例访问
+            idx = {}
+            if hasattr(self.plugin, "_load_index"):
+                idx = await self.plugin._load_index()
+            elif hasattr(self.plugin, "cache_service"):
+                 idx = self.plugin.cache_service.get_cache("index_cache")
+            
+            if not idx:
+                return []
+            
+            query_tokens = set(query.lower().split())
+            candidates = []
+            
+            for file_path, data in idx.items():
+                if not isinstance(data, dict):
+                    continue
+                    
+                score = 0
+                desc = str(data.get("desc", "")).lower()
+                tags = [str(t).lower() for t in data.get("tags", [])]
+                category = str(data.get("category", "")).lower()
+                
+                query_lower = query.lower()
+                
+                # 1. 分类精确匹配（最高优先级）
+                if query_lower == category:
+                    score += 20  # 从 3 提升到 20
+                # 分类包含匹配
+                elif query_lower in category or category in query_lower:
+                    score += 10
+                
+                # 2. 描述完整匹配
+                if query_lower == desc:
+                    score += 15
+                # 描述包含匹配
+                elif query_lower in desc:
+                    score += 10
+                # 描述词汇匹配
+                elif any(token in desc for token in query_tokens if len(token) > 1):
+                    score += 5
+                
+                # 3. 标签匹配
+                for tag in tags:
+                    if query_lower == tag:
+                        score += 8  # 完全匹配
+                    elif query_lower in tag:
+                        score += 5  # 包含匹配
+                    else:
+                        # Token 匹配
+                        for token in query_tokens:
+                            if len(token) > 1 and token in tag:
+                                score += 1
+                
+                if score > 0:
+                    candidates.append({
+                        "path": file_path,
+                        "desc": desc,
+                        "emotion": category,
+                        "score": score
+                    })
+            
+            # 按分数排序
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+            
+            result = []
+            for item in candidates[:limit]:
+                result.append((item["path"], item["desc"], item["emotion"]))
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"搜索图片失败: {e}")
+            return []

@@ -13,6 +13,7 @@ class PluginConfig(BaseModel):
     auto_send: bool = Field(default=True, description="是否自动随聊追加表情包")
     vision_provider_id: str | None = Field(default=None, description="视觉模型提供商ID")
     emoji_chance: float = Field(default=0.4, description="触发表情动作的基础概率")
+    smart_emoji_selection: bool = Field(default=True, description="是否启用智能表情包选择")
     max_reg_num: int = Field(default=100, description="允许注册的最大表情数量")
     do_replace: bool = Field(default=True, description="达到上限时是否替换旧表情")
     raw_cleanup_interval: int = Field(
@@ -43,6 +44,9 @@ class PluginConfig(BaseModel):
     image_processing_cooldown: int = Field(
         default=30, description="冷却模式下两次处理之间的最小间隔秒数"
     )
+    webui_enabled: bool = Field(default=True, description="是否启用WebUI管理界面")
+    webui_host: str = Field(default="0.0.0.0", description="WebUI监听地址")
+    webui_port: int = Field(default=8899, description="WebUI监听端口")
     categories: list[str] = Field(
         default_factory=lambda: [
             "happy",
@@ -283,6 +287,7 @@ class ConfigService:
         self.steal_emoji = True  # 开启表情包偷取功能
         self.auto_send = True    # 自动随聊发送表情包
         self.emoji_chance = 0.4  # 表情包发送概率
+        self.smart_emoji_selection = True  # 智能表情包选择
 
         # === 模型配置 ===
         self.vision_provider_id = None  # 视觉模型（留空使用当前会话模型）
@@ -296,6 +301,11 @@ class ConfigService:
         self.image_processing_mode = "probability"  # 图片处理模式
         self.image_processing_probability = 0.3     # 概率模式：处理概率
         self.image_processing_interval = 60         # 间隔模式：处理间隔（秒）
+
+        # === WebUI 配置 ===
+        self.webui_enabled = True       # 是否启用WebUI
+        self.webui_host = "0.0.0.0"     # WebUI监听地址
+        self.webui_port = 8899          # WebUI监听端口
 
         # === 高级选项 ===
         self.enable_raw_cleanup = True          # 自动清理原始图片
@@ -356,6 +366,7 @@ class ConfigService:
 
         self.auto_send = self.config_manager.get("auto_send")
         self.emoji_chance = self.config_manager.get("emoji_chance")
+        self.smart_emoji_selection = self.config_manager.get("smart_emoji_selection", True)  # 默认启用
         self.max_reg_num = self.config_manager.get("max_reg_num")
         self.do_replace = self.config_manager.get("do_replace")
         self.raw_cleanup_interval = self.config_manager.get("raw_cleanup_interval")
@@ -372,6 +383,11 @@ class ConfigService:
         self.content_filtration = self.config_manager.get("content_filtration")
         self.vision_provider_id = self.config_manager.get("vision_provider_id")
         self.raw_retention_minutes = self.config_manager.get("raw_retention_minutes")
+
+        # 加载 WebUI 配置
+        self.webui_enabled = self.config_manager.get("webui_enabled")
+        self.webui_host = self.config_manager.get("webui_host")
+        self.webui_port = self.config_manager.get("webui_port")
 
         # 加载图片处理节流配置
         self.image_processing_mode = self.config_manager.get("image_processing_mode")
@@ -485,6 +501,7 @@ class ConfigService:
                 "auto_send": self.auto_send,
                 "categories": self.categories,
                 "emoji_chance": self.emoji_chance,
+                "smart_emoji_selection": self.smart_emoji_selection,
                 "max_reg_num": self.max_reg_num,
                 "do_replace": self.do_replace,
                 "raw_cleanup_interval": self.raw_cleanup_interval,
