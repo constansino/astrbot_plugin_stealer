@@ -96,11 +96,16 @@
 | `rebuild_index` | 重建索引并恢复旧数据 |
 | `debug_image` | [回复图片] 调试图片识别结果 |
 
+
+
+好用就给个star吧谢谢大伙
+
 ## 📄 许可证
 
 本项目基于 MIT 许可证开源。
 
 [![GitHub license](https://img.shields.io/github/license/nagatoquin33/astrbot_plugin_stealer)](https://github.com/nagatoquin33/astrbot_plugin_stealer/blob/main/LICENSE)
+
 
 
 
